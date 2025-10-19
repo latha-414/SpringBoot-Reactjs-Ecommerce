@@ -13,8 +13,9 @@ phases:
   build:
     commands:
       - echo Building backend Docker image...
+      - cd Ecommerce-Backend
       - mvn clean package -DskipTests
-      - docker build -t ecommerce-backend Ecommerce-Backend/
+      - docker build -t ecommerce-backend .
       - docker tag ecommerce-backend:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/ecommerce-backend:latest
 
   post_build:
