@@ -7,12 +7,12 @@ phases:
   pre_build:
     commands:
       - echo Logging in to Amazon ECR...
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin <aws_account_id>.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
   build:
     commands:
       - echo Building frontend Docker image...
       - docker build -t ecommerce-frontend Ecommerce-Frontend/
-      - docker tag ecommerce-frontend:latest 474668399006.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/ecommerce-project-frontend:latest
+      - docker tag ecommerce-frontend:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/ecommerce-project-frontend:latest
   post_build:
     commands:
       - echo Pushing frontend Docker image...
