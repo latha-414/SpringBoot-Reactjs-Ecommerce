@@ -1,0 +1,19 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 18
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin <aws_account_id>.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+  build:
+    commands:
+      - echo Building frontend Docker image...
+      - docker build -t ecommerce-frontend Ecommerce-Frontend/
+      - docker tag ecommerce-frontend:latest <aws_account_id>.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/ecommerce-frontend:latest
+  post_build:
+    commands:
+      - echo Pushing frontend Docker image...
+      - docker push <aws_account_id>.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/ecommerce-frontend:latest
