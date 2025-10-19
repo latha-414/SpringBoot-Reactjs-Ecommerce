@@ -21,4 +21,4 @@ phases:
   post_build:
     commands:
       - echo Pushing backend Docker image...
-      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/ecommerce-backend:latest
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/ecommerce-project-backend:latest
