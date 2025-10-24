@@ -1,32 +1,42 @@
 pipeline {
     agent any
 
-   environment {
-    JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' // Adjust based on your JDK path
-    PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
-    AWS_ACCOUNT_ID = '474668399006'
-    AWS_REGION = 'ap-south-1'
-    BACKEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-    FRONTEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
-    BACKEND_IMAGE_TAG = "latest"
-    FRONTEND_IMAGE_TAG = "latest"
-}
-
-    stage('Login to ECR') {
-    steps {
-        withAWS(credentials: 'aws-ecr-credentials', region: "${AWS_REGION}") {
-            echo "Logging into AWS ECR"
-            sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-        }
+    environment {
+        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' // Adjust based on your JDK path
+        PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+        AWS_ACCOUNT_ID = '474668399006'
+        AWS_REGION = 'ap-south-1'
+        BACKEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+        FRONTEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+        BACKEND_IMAGE_TAG = "latest"
+        FRONTEND_IMAGE_TAG = "latest"
     }
-}
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo "Checking out code from GitHub"
+                git branch: 'main', url: 'https://github.com/latha-414/SpringBoot-Reactjs-Ecommerce'
+            }
+        }
 
         stage('Build Backend') {
             steps {
                 dir('Ecommerce-Backend') {
                     echo "Building backend with Maven"
                     retry(3) {
-                        sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2 -e -X'
+                        sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
+                    }
+                }
+            }
+        }
+
+        stage('Build Frontend') {
+            steps {
+                dir('Ecommerce-Frontend') {
+                    echo "Building frontend with npm"
+                    retry(3) {
+                        sh 'npm install && npm run build'
                     }
                 }
             }
@@ -35,35 +45,41 @@ pipeline {
         stage('Build Docker Images') {
             steps {
                 script {
-                    echo "Building backend Docker image"
-                    sh "docker build -t ${BACKEND_ECR}:${BACKEND_IMAGE_TAG} Ecommerce-Backend/"
-                    
-                    echo "Building frontend Docker image"
-                    sh "docker build -t ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
+                    docker.image('docker:20.10-dind').inside('--privileged') {
+                        echo "Building backend Docker image"
+                        sh "docker build -t ${BACKEND_ECR}:${BACKEND_IMAGE_TAG} Ecommerce-Backend/"
+                        
+                        echo "Building frontend Docker image"
+                        sh "docker build -t ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
+                    }
                 }
             }
         }
 
         stage('Login to ECR') {
             steps {
-                echo "Logging into AWS ECR"
-                sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                withAWS(credentials: 'aws-ecr-credentials', region: "${AWS_REGION}") {
+                    echo "Logging into AWS ECR"
+                    sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                }
             }
         }
 
         stage('Push Docker Images') {
             steps {
-                echo "Pushing backend Docker image to ECR"
-                sh "docker push ${BACKEND_ECR}:${BACKEND_IMAGE_TAG}"
+                docker.image('docker:20.10-dind').inside('--privileged') {
+                    echo "Pushing backend Docker image to ECR"
+                    sh "docker push ${BACKEND_ECR}:${BACKEND_IMAGE_TAG}"
 
-                echo "Pushing frontend Docker image to ECR"
-                sh "docker push ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG}"
+                    echo "Pushing frontend Docker image to ECR"
+                    sh "docker push ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG}"
+                }
             }
         }
 
         stage('Deploy to ECS') {
             steps {
-                script {
+                withAWS(credentials: 'aws-ecr-credentials', region: "${AWS_REGION}") {
                     echo "Updating ECS backend service"
                     sh """
                     aws ecs update-service \
