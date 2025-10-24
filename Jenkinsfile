@@ -20,24 +20,6 @@ pipeline {
             }
         }
 
-        stage('Setup Tools') {
-            steps {
-                script {
-                    echo "⚙️ Installing required tools (AWS CLI, Python, unzip, curl)..."
-                    // Removed all 'sudo' since Jenkins runs as root in most setups
-                    sh '''
-                    apt update -y
-                    apt install -y unzip curl python3 python3-pip
-                    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-                    unzip awscliv2.zip
-                    ./aws/install
-                    rm -rf awscliv2.zip aws/
-                    aws --version
-                    '''
-                }
-            }
-        }
-
         stage('Build Backend') {
             steps {
                 dir('Ecommerce-Backend') {
@@ -66,7 +48,7 @@ pipeline {
         stage('Build Docker Images') {
             steps {
                 script {
-                    echo "🐳 Building Docker images for backend and frontend..."
+                    echo "🐳 Building Docker images..."
                     sh "docker build -t ${BACKEND_ECR}:${BACKEND_IMAGE_TAG} Ecommerce-Backend/"
                     sh "docker build -t ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
                 }
@@ -88,10 +70,8 @@ pipeline {
         stage('Push Docker Images') {
             steps {
                 script {
-                    echo "📤 Pushing backend Docker image to ECR..."
+                    echo "📤 Pushing Docker images to ECR..."
                     sh "docker push ${BACKEND_ECR}:${BACKEND_IMAGE_TAG}"
-
-                    echo "📤 Pushing frontend Docker image to ECR..."
                     sh "docker push ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG}"
                 }
             }
@@ -100,7 +80,7 @@ pipeline {
         stage('Deploy to ECS') {
             steps {
                 withAWS(credentials: 'aws-ecr-credentials', region: "${AWS_REGION}") {
-                    echo "🚀 Deploying updated services to ECS..."
+                    echo "🚀 Deploying new versions to ECS..."
                     sh """
                     aws ecs update-service \
                         --cluster ecommerce-project-cluster \
@@ -123,7 +103,7 @@ pipeline {
             echo "🎉 Deployment completed successfully!"
         }
         failure {
-            echo "❌ Pipeline failed. Please check the logs above for details."
+            echo "❌ Pipeline failed. Please check logs for details."
         }
     }
 }
