@@ -12,13 +12,14 @@ pipeline {
     FRONTEND_IMAGE_TAG = "latest"
 }
 
-    stages {
-        stage('Checkout') {
-            steps {
-                echo "Checking out code from GitHub"
-                git branch: 'main', url: 'https://github.com/latha-414/SpringBoot-Reactjs-Ecommerce'
-            }
+    stage('Login to ECR') {
+    steps {
+        withAWS(credentials: 'aws-ecr-credentials', region: "${AWS_REGION}") {
+            echo "Logging into AWS ECR"
+            sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         }
+    }
+}
 
         stage('Build Backend') {
             steps {
