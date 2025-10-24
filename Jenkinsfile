@@ -1,15 +1,16 @@
 pipeline {
     agent any
 
-    environment {
-        AWS_ACCOUNT_ID      = '474668399006'
-        AWS_REGION          = 'ap-south-1'
-        BACKEND_ECR         = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-        FRONTEND_ECR        = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
-        BACKEND_IMAGE_TAG   = "latest"
-        FRONTEND_IMAGE_TAG  = "latest"
-        JAVA_HOME           = '/path/to/jdk-17' // Update with actual path
-    }
+   environment {
+    JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' // Adjust based on your JDK path
+    PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+    AWS_ACCOUNT_ID = '474668399006'
+    AWS_REGION = 'ap-south-1'
+    BACKEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+    FRONTEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+    BACKEND_IMAGE_TAG = "latest"
+    FRONTEND_IMAGE_TAG = "latest"
+}
 
     stages {
         stage('Checkout') {
