@@ -20,6 +20,23 @@ pipeline {
             }
         }
 
+        stage('Setup Tools') {
+            steps {
+                script {
+                    echo "Installing AWS CLI"
+                    sh '''
+                    sudo apt update
+                    sudo apt install -y unzip curl python3 python3-pip
+                    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                    unzip awscliv2.zip
+                    sudo ./aws/install
+                    rm -rf awscliv2.zip aws/
+                    aws --version
+                    '''
+                }
+            }
+        }
+
         stage('Build Backend') {
             steps {
                 dir('Ecommerce-Backend') {
@@ -45,13 +62,11 @@ pipeline {
         stage('Build Docker Images') {
             steps {
                 script {
-                    docker.image('docker:20.10-dind').inside('--privileged') {
-                        echo "Building backend Docker image"
-                        sh "docker build -t ${BACKEND_ECR}:${BACKEND_IMAGE_TAG} Ecommerce-Backend/"
-                        
-                        echo "Building frontend Docker image"
-                        sh "docker build -t ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
-                    }
+                    echo "Building backend Docker image"
+                    sh "docker build -t ${BACKEND_ECR}:${BACKEND_IMAGE_TAG} Ecommerce-Backend/"
+                    
+                    echo "Building frontend Docker image"
+                    sh "docker build -t ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
                 }
             }
         }
@@ -67,7 +82,7 @@ pipeline {
 
         stage('Push Docker Images') {
             steps {
-                docker.image('docker:20.10-dind').inside('--privileged') {
+                script {
                     echo "Pushing backend Docker image to ECR"
                     sh "docker push ${BACKEND_ECR}:${BACKEND_IMAGE_TAG}"
 
