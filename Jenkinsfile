@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     environment {
-        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' // Adjust based on your JDK path
-        PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}" // Ensure aws, node, npm are in PATH
+        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
+        PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
         AWS_ACCOUNT_ID = '474668399006'
         AWS_REGION = 'ap-south-1'
         BACKEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
@@ -15,7 +15,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                echo "Checking out code from GitHub"
+                echo "📦 Checking out code from GitHub"
                 git branch: 'main', url: 'https://github.com/latha-414/SpringBoot-Reactjs-Ecommerce'
             }
         }
@@ -23,7 +23,7 @@ pipeline {
         stage('Build Backend') {
             steps {
                 dir('Ecommerce-Backend') {
-                    echo "Building backend with Maven"
+                    echo "⚙️ Building backend with Maven"
                     retry(3) {
                         sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
                     }
@@ -34,7 +34,7 @@ pipeline {
         stage('Build Frontend') {
             steps {
                 dir('Ecommerce-Frontend') {
-                    echo "Building frontend with npm"
+                    echo "🎨 Building frontend with npm"
                     timeout(time: 10, unit: 'MINUTES') {
                         retry(3) {
                             sh 'npm install && npm run build'
@@ -47,10 +47,10 @@ pipeline {
         stage('Build Docker Images') {
             steps {
                 script {
-                    echo "Building backend Docker image"
+                    echo "🐳 Building backend Docker image"
                     sh "docker build -t ${BACKEND_ECR}:${BACKEND_IMAGE_TAG} Ecommerce-Backend/"
                     
-                    echo "Building frontend Docker image"
+                    echo "🐳 Building frontend Docker image"
                     sh "docker build -t ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
                 }
             }
@@ -58,8 +58,8 @@ pipeline {
 
         stage('Login to ECR') {
             steps {
-                withAWS(credentials: 'aws-ecr-credentials', region: "${AWS_REGION}") {
-                    echo "Logging into AWS ECR"
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-ecr-credentials']]) {
+                    echo "🔐 Logging into AWS ECR"
                     sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
                 }
             }
@@ -68,10 +68,10 @@ pipeline {
         stage('Push Docker Images') {
             steps {
                 script {
-                    echo "Pushing backend Docker image to ECR"
+                    echo "🚀 Pushing backend Docker image to ECR"
                     sh "docker push ${BACKEND_ECR}:${BACKEND_IMAGE_TAG}"
 
-                    echo "Pushing frontend Docker image to ECR"
+                    echo "🚀 Pushing frontend Docker image to ECR"
                     sh "docker push ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG}"
                 }
             }
@@ -79,8 +79,8 @@ pipeline {
 
         stage('Deploy to ECS') {
             steps {
-                withAWS(credentials: 'aws-ecr-credentials', region: "${AWS_REGION}") {
-                    echo "Updating ECS backend service"
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-ecr-credentials']]) {
+                    echo "🔄 Updating ECS backend service"
                     sh """
                     aws ecs update-service \
                         --cluster ecommerce-project-cluster \
@@ -88,7 +88,7 @@ pipeline {
                         --force-new-deployment
                     """
 
-                    echo "Updating ECS frontend service"
+                    echo "🔄 Updating ECS frontend service"
                     sh """
                     aws ecs update-service \
                         --cluster ecommerce-project-cluster \
@@ -102,10 +102,10 @@ pipeline {
 
     post {
         success {
-            echo "Deployment completed successfully!"
+            echo "✅ Deployment completed successfully!"
         }
         failure {
-            echo "Pipeline failed. Check the logs."
+            echo "❌ Pipeline failed. Check the logs."
         }
     }
 }
