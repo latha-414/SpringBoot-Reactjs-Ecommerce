@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' // Adjust based on your JDK path
-        PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}" // Ensure aws is in PATH
+        PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}" // Ensure aws, node, npm are in PATH
         AWS_ACCOUNT_ID = '474668399006'
         AWS_REGION = 'ap-south-1'
         BACKEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
@@ -35,8 +35,10 @@ pipeline {
             steps {
                 dir('Ecommerce-Frontend') {
                     echo "Building frontend with npm"
-                    retry(3) {
-                        sh 'npm install && npm run build'
+                    timeout(time: 10, unit: 'MINUTES') {
+                        retry(3) {
+                            sh 'npm install && npm run build'
+                        }
                     }
                 }
             }
