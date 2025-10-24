@@ -2,12 +2,13 @@ pipeline {
     agent any
 
     environment {
-        AWS_ACCOUNT_ID      = '474668399006' // Replace with your account ID or use Jenkins credentials
+        AWS_ACCOUNT_ID      = '474668399006'
         AWS_REGION          = 'ap-south-1'
         BACKEND_ECR         = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
         FRONTEND_ECR        = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
         BACKEND_IMAGE_TAG   = "latest"
         FRONTEND_IMAGE_TAG  = "latest"
+        JAVA_HOME           = '/path/to/jdk-17' // Update with actual path
     }
 
     stages {
@@ -22,7 +23,9 @@ pipeline {
             steps {
                 dir('Ecommerce-Backend') {
                     echo "Building backend with Maven"
-                    sh 'mvn clean package -DskipTests'
+                    retry(3) {
+                        sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2 -e -X'
+                    }
                 }
             }
         }
@@ -30,11 +33,9 @@ pipeline {
         stage('Build Docker Images') {
             steps {
                 script {
-                    // Backend Docker image
                     echo "Building backend Docker image"
                     sh "docker build -t ${BACKEND_ECR}:${BACKEND_IMAGE_TAG} Ecommerce-Backend/"
                     
-                    // Frontend Docker image
                     echo "Building frontend Docker image"
                     sh "docker build -t ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
                 }
