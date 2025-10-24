@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' // Adjust based on your JDK path
+        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
         AWS_ACCOUNT_ID = '474668399006'
         AWS_REGION = 'ap-south-1'
@@ -15,7 +15,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                echo "Checking out code from GitHub"
+                echo "✅ Checking out code from GitHub..."
                 git branch: 'main', url: 'https://github.com/latha-414/SpringBoot-Reactjs-Ecommerce'
             }
         }
@@ -23,13 +23,14 @@ pipeline {
         stage('Setup Tools') {
             steps {
                 script {
-                    echo "Installing AWS CLI"
+                    echo "⚙️ Installing required tools (AWS CLI, Python, unzip, curl)..."
+                    // Removed all 'sudo' since Jenkins runs as root in most setups
                     sh '''
-                    sudo apt update
-                    sudo apt install -y unzip curl python3 python3-pip
+                    apt update -y
+                    apt install -y unzip curl python3 python3-pip
                     curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
                     unzip awscliv2.zip
-                    sudo ./aws/install
+                    ./aws/install
                     rm -rf awscliv2.zip aws/
                     aws --version
                     '''
@@ -40,7 +41,7 @@ pipeline {
         stage('Build Backend') {
             steps {
                 dir('Ecommerce-Backend') {
-                    echo "Building backend with Maven"
+                    echo "🚀 Building backend using Maven..."
                     retry(3) {
                         sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
                     }
@@ -51,9 +52,12 @@ pipeline {
         stage('Build Frontend') {
             steps {
                 dir('Ecommerce-Frontend') {
-                    echo "Building frontend with npm"
+                    echo "🎨 Building frontend using npm..."
                     retry(3) {
-                        sh 'npm install && npm run build'
+                        sh '''
+                        npm install
+                        npm run build
+                        '''
                     }
                 }
             }
@@ -62,10 +66,8 @@ pipeline {
         stage('Build Docker Images') {
             steps {
                 script {
-                    echo "Building backend Docker image"
+                    echo "🐳 Building Docker images for backend and frontend..."
                     sh "docker build -t ${BACKEND_ECR}:${BACKEND_IMAGE_TAG} Ecommerce-Backend/"
-                    
-                    echo "Building frontend Docker image"
                     sh "docker build -t ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
                 }
             }
@@ -74,8 +76,11 @@ pipeline {
         stage('Login to ECR') {
             steps {
                 withAWS(credentials: 'aws-ecr-credentials', region: "${AWS_REGION}") {
-                    echo "Logging into AWS ECR"
-                    sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                    echo "🔐 Logging in to AWS ECR..."
+                    sh """
+                    aws ecr get-login-password --region ${AWS_REGION} | \
+                    docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                    """
                 }
             }
         }
@@ -83,10 +88,10 @@ pipeline {
         stage('Push Docker Images') {
             steps {
                 script {
-                    echo "Pushing backend Docker image to ECR"
+                    echo "📤 Pushing backend Docker image to ECR..."
                     sh "docker push ${BACKEND_ECR}:${BACKEND_IMAGE_TAG}"
 
-                    echo "Pushing frontend Docker image to ECR"
+                    echo "📤 Pushing frontend Docker image to ECR..."
                     sh "docker push ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG}"
                 }
             }
@@ -95,15 +100,13 @@ pipeline {
         stage('Deploy to ECS') {
             steps {
                 withAWS(credentials: 'aws-ecr-credentials', region: "${AWS_REGION}") {
-                    echo "Updating ECS backend service"
+                    echo "🚀 Deploying updated services to ECS..."
                     sh """
                     aws ecs update-service \
                         --cluster ecommerce-project-cluster \
                         --service ecommerce-project-backend-service \
                         --force-new-deployment
                     """
-
-                    echo "Updating ECS frontend service"
                     sh """
                     aws ecs update-service \
                         --cluster ecommerce-project-cluster \
@@ -117,10 +120,10 @@ pipeline {
 
     post {
         success {
-            echo "Deployment completed successfully!"
+            echo "🎉 Deployment completed successfully!"
         }
         failure {
-            echo "Pipeline failed. Check the logs."
+            echo "❌ Pipeline failed. Please check the logs above for details."
         }
     }
 }
