@@ -1,10 +1,11 @@
 pipeline {
-    agent any // Use a specific agent
+    agent any
 
     environment {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
         AWS_REGION = 'ap-south-1'
+        AWS_ACCOUNT_ID = '' // Leave empty or set as Jenkins node environment variable securely
         BACKEND_IMAGE_TAG = "${env.BUILD_NUMBER}"
         FRONTEND_IMAGE_TAG = "${env.BUILD_NUMBER}"
     }
@@ -48,13 +49,13 @@ pipeline {
         stage('Build Docker Images') {
             steps {
                 script {
-                    def BACKEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-                    def FRONTEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
                     timeout(time: 10, unit: 'MINUTES') {
                         echo "🐳 Building backend Docker image"
-                        sh "docker build -t ${BACKEND_ECR}:${BACKEND_IMAGE_TAG} Ecommerce-Backend/"
+                        sh "docker build -t ${BACKEND_ECR}:${env.BACKEND_IMAGE_TAG} Ecommerce-Backend/"
                         echo "🐳 Building frontend Docker image"
-                        sh "docker build -t ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
+                        sh "docker build -t ${FRONTEND_ECR}:${env.FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
                     }
                 }
             }
@@ -65,7 +66,7 @@ pipeline {
                 echo "🔐 Logging into AWS ECR"
                 timeout(time: 5, unit: 'MINUTES') {
                     retry(3) {
-                        sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                        sh "aws ecr get-login-password --region ${env.AWS_REGION} | docker login --username AWS --password-stdin ${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
                     }
                 }
             }
@@ -74,15 +75,15 @@ pipeline {
         stage('Push Docker Images') {
             steps {
                 script {
-                    def BACKEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-                    def FRONTEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
                     timeout(time: 10, unit: 'MINUTES') {
                         echo "🚀 Pushing backend Docker image to ECR"
-                        sh "docker push ${BACKEND_ECR}:${BACKEND_IMAGE_TAG}"
-                        sh "docker rmi ${BACKEND_ECR}:${BACKEND_IMAGE_TAG}"
+                        sh "docker push ${BACKEND_ECR}:${env.BACKEND_IMAGE_TAG}"
+                        sh "docker rmi ${BACKEND_ECR}:${env.BACKEND_IMAGE_TAG}"
                         echo "🚀 Pushing frontend Docker image to ECR"
-                        sh "docker push ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG}"
-                        sh "docker rmi ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG}"
+                        sh "docker push ${FRONTEND_ECR}:${env.FRONTEND_IMAGE_TAG}"
+                        sh "docker rmi ${FRONTEND_ECR}:${env.FRONTEND_IMAGE_TAG}"
                     }
                 }
             }
@@ -110,7 +111,7 @@ pipeline {
                     aws ecs wait services-stable \
                         --cluster ecommerce-project-cluster \
                         --services ecommerce-project-backend-service ecommerce-project-frontend-service \
-                        --region ${AWS_REGION}
+                        --region ${env.AWS_REGION}
                     """
                 }
             }
