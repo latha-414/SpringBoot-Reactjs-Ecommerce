@@ -47,16 +47,14 @@ pipeline {
 
         stage('Build Docker Images') {
             steps {
-                withCredentials([string(credentialsId: 'aws-account-id', variable: 'AWS_ACCOUNT_ID')]) {
-                    script {
-                        def BACKEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-                        def FRONTEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
-                        timeout(time: 10, unit: 'MINUTES') {
-                            echo "🐳 Building backend Docker image"
-                            sh "docker build -t ${BACKEND_ECR}:${BACKEND_IMAGE_TAG} Ecommerce-Backend/"
-                            echo "🐳 Building frontend Docker image"
-                            sh "docker build -t ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
-                        }
+                script {
+                    def BACKEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def FRONTEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+                    timeout(time: 10, unit: 'MINUTES') {
+                        echo "🐳 Building backend Docker image"
+                        sh "docker build -t ${BACKEND_ECR}:${BACKEND_IMAGE_TAG} Ecommerce-Backend/"
+                        echo "🐳 Building frontend Docker image"
+                        sh "docker build -t ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
                     }
                 }
             }
@@ -64,12 +62,10 @@ pipeline {
 
         stage('Login to ECR') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-ecr-credentials']]) {
-                    echo "🔐 Logging into AWS ECR"
-                    timeout(time: 5, unit: 'MINUTES') {
-                        retry(3) {
-                            sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-                        }
+                echo "🔐 Logging into AWS ECR"
+                timeout(time: 5, unit: 'MINUTES') {
+                    retry(3) {
+                        sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
                     }
                 }
             }
@@ -77,18 +73,16 @@ pipeline {
 
         stage('Push Docker Images') {
             steps {
-                withCredentials([string(credentialsId: 'aws-account-id', variable: 'AWS_ACCOUNT_ID')]) {
-                    script {
-                        def BACKEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-                        def FRONTEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
-                        timeout(time: 10, unit: 'MINUTES') {
-                            echo "🚀 Pushing backend Docker image to ECR"
-                            sh "docker push ${BACKEND_ECR}:${BACKEND_IMAGE_TAG}"
-                            sh "docker rmi ${BACKEND_ECR}:${BACKEND_IMAGE_TAG}"
-                            echo "🚀 Pushing frontend Docker image to ECR"
-                            sh "docker push ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG}"
-                            sh "docker rmi ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG}"
-                        }
+                script {
+                    def BACKEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def FRONTEND_ECR = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+                    timeout(time: 10, unit: 'MINUTES') {
+                        echo "🚀 Pushing backend Docker image to ECR"
+                        sh "docker push ${BACKEND_ECR}:${BACKEND_IMAGE_TAG}"
+                        sh "docker rmi ${BACKEND_ECR}:${BACKEND_IMAGE_TAG}"
+                        echo "🚀 Pushing frontend Docker image to ECR"
+                        sh "docker push ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG}"
+                        sh "docker rmi ${FRONTEND_ECR}:${FRONTEND_IMAGE_TAG}"
                     }
                 }
             }
@@ -96,30 +90,28 @@ pipeline {
 
         stage('Deploy to ECS') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-ecr-credentials']]) {
-                    timeout(time: 5, unit: 'MINUTES') {
-                        echo "🔄 Updating ECS backend service"
-                        sh """
-                        aws ecs update-service \
-                            --cluster ecommerce-project-cluster \
-                            --service ecommerce-project-backend-service \
-                            --force-new-deployment
-                        """
-                        echo "🔄 Updating ECS frontend service"
-                        sh """
-                        aws ecs update-service \
-                            --cluster ecommerce-project-cluster \
-                            --service ecommerce-project-frontend-service \
-                            --force-new-deployment
-                        """
-                        echo "⏳ Waiting for services to stabilize"
-                        sh """
-                        aws ecs wait services-stable \
-                            --cluster ecommerce-project-cluster \
-                            --services ecommerce-project-backend-service ecommerce-project-frontend-service \
-                            --region ${AWS_REGION}
-                        """
-                    }
+                timeout(time: 5, unit: 'MINUTES') {
+                    echo "🔄 Updating ECS backend service"
+                    sh """
+                    aws ecs update-service \
+                        --cluster ecommerce-project-cluster \
+                        --service ecommerce-project-backend-service \
+                        --force-new-deployment
+                    """
+                    echo "🔄 Updating ECS frontend service"
+                    sh """
+                    aws ecs update-service \
+                        --cluster ecommerce-project-cluster \
+                        --service ecommerce-project-frontend-service \
+                        --force-new-deployment
+                    """
+                    echo "⏳ Waiting for services to stabilize"
+                    sh """
+                    aws ecs wait services-stable \
+                        --cluster ecommerce-project-cluster \
+                        --services ecommerce-project-backend-service ecommerce-project-frontend-service \
+                        --region ${AWS_REGION}
+                    """
                 }
             }
         }
