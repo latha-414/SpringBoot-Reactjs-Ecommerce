@@ -1,6 +1,11 @@
 pipeline {
     agent any
 
+    tools {
+        maven 'maven-3.8.1'  // Maven name as configured in Global Tool Configuration
+        jdk 'java-17-openjdk' // If you have JDK configured as well
+    }
+    
     environment {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
