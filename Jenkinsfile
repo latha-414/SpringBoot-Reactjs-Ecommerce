@@ -124,13 +124,4 @@ pipeline {
             }
         }
     }
-
-    post {
-        success {
-            slackSend channel: '#deployments', message: "✅ Deployment succeeded: ${env.JOB_NAME} #${env.BUILD_NUMBER}"
-        }
-        failure {
-            slackSend channel: '#deployments', message: "❌ Deployment failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}"
-        }
-    }
 }
