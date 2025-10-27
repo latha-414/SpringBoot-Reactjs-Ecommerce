@@ -1,0 +1,60 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_ACCOUNT_ID = '474668399006'
+        AWS_REGION = 'ap-south-1'
+        BACKEND_ECR_REPO = "ecommerce-project-backend"
+        FRONTEND_ECR_REPO = "ecommerce-project-frontend"
+        BACKEND_SERVICE = "ecommerce-project-backend-service"
+        FRONTEND_SERVICE = "ecommerce-project-frontend-service"
+        ECS_CLUSTER = "ecommerce-project-cluster"
+    }
+
+    stages {
+        stage('Delete backend ECR image') {
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-ecr-credentials']]) {
+                    sh """
+                    aws ecr batch-delete-image --repository-name ${BACKEND_ECR_REPO} --image-ids imageTag=latest --region ${AWS_REGION}
+                    """
+                }
+            }
+        }
+        stage('Delete frontend ECR image') {
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-ecr-credentials']]) {
+                    sh """
+                    aws ecr batch-delete-image --repository-name ${FRONTEND_ECR_REPO} --image-ids imageTag=latest --region ${AWS_REGION}
+                    """
+                }
+            }
+        }
+        stage('Delete backend ECS service') {
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-ecr-credentials']]) {
+                    sh """
+                    aws ecs delete-service --cluster ${ECS_CLUSTER} --service ${BACKEND_SERVICE} --force --region ${AWS_REGION}
+                    """
+                }
+            }
+        }
+        stage('Delete frontend ECS service') {
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-ecr-credentials']]) {
+                    sh """
+                    aws ecs delete-service --cluster ${ECS_CLUSTER} --service ${FRONTEND_SERVICE} --force --region ${AWS_REGION}
+                    """
+                }
+            }
+        }
+    }
+    post {
+        success {
+            echo "✅ Cleanup completed successfully!"
+        }
+        failure {
+            echo "❌ Cleanup failed. Check the logs."
+        }
+    }
+}
