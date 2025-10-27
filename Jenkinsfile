@@ -1,5 +1,5 @@
 pipeline {
-    agent { label 'ecs-builder' } // Use a specific agent
+    agent any // Use a specific agent
 
     environment {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
