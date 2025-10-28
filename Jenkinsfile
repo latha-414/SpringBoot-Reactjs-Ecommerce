@@ -1,47 +1,22 @@
 pipeline {
-    agent any
+    agent { label 'ecs-builder' }
 
     environment {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
         AWS_REGION = 'ap-south-1'
-        AWS_ACCOUNT_ID = '' // Leave empty or set as Jenkins node environment variable securely
-        BACKEND_IMAGE_TAG = "${env.BUILD_NUMBER}"
-        FRONTEND_IMAGE_TAG = "${env.BUILD_NUMBER}"
+        IMAGE_TAG = "${env.BUILD_NUMBER}"
     }
 
     stages {
-        stage('Checkout') {
+        stage('Get AWS Account ID') {
             steps {
-                echo "📦 Checking out code from GitHub"
-                retry(3) {
-                    git branch: 'main', credentialsId: 'github-credentials', url: 'https://github.com/latha-414/SpringBoot-Reactjs-Ecommerce'
-                }
-            }
-        }
-
-        stage('Build Backend') {
-            steps {
-                dir('Ecommerce-Backend') {
-                    echo "⚙️ Building backend with Maven"
-                    timeout(time: 10, unit: 'MINUTES') {
-                        retry(3) {
-                            sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Build Frontend') {
-            steps {
-                dir('Ecommerce-Frontend') {
-                    echo "🎨 Building frontend with npm"
-                    timeout(time: 10, unit: 'MINUTES') {
-                        retry(3) {
-                            sh 'npm install && npm run build'
-                        }
-                    }
+                script {
+                    env.AWS_ACCOUNT_ID = sh(
+                        script: "aws sts get-caller-identity --query Account --output text",
+                        returnStdout: true
+                    ).trim()
+                    echo "Deploying with Account ID: ${env.AWS_ACCOUNT_ID}"
                 }
             }
         }
@@ -49,25 +24,20 @@ pipeline {
         stage('Build Docker Images') {
             steps {
                 script {
-                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
-                    timeout(time: 10, unit: 'MINUTES') {
-                        echo "🐳 Building backend Docker image"
-                        sh "docker build -t ${BACKEND_ECR}:${env.BACKEND_IMAGE_TAG} Ecommerce-Backend/"
-                        echo "🐳 Building frontend Docker image"
-                        sh "docker build -t ${FRONTEND_ECR}:${env.FRONTEND_IMAGE_TAG} Ecommerce-Frontend/"
-                    }
+                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+
+                    sh "docker build -t ${BACKEND_ECR}:${IMAGE_TAG} Ecommerce-Backend/"
+                    sh "docker build -t ${FRONTEND_ECR}:${IMAGE_TAG} Ecommerce-Frontend/"
                 }
             }
         }
 
         stage('Login to ECR') {
             steps {
-                echo "🔐 Logging into AWS ECR"
-                timeout(time: 5, unit: 'MINUTES') {
-                    retry(3) {
-                        sh "aws ecr get-login-password --region ${env.AWS_REGION} | docker login --username AWS --password-stdin ${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
-                    }
+                script {
+                    def ECR_REGISTRY = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                    sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
                 }
             }
         }
@@ -75,46 +45,53 @@ pipeline {
         stage('Push Docker Images') {
             steps {
                 script {
-                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
-                    timeout(time: 10, unit: 'MINUTES') {
-                        echo "🚀 Pushing backend Docker image to ECR"
-                        sh "docker push ${BACKEND_ECR}:${env.BACKEND_IMAGE_TAG}"
-                        sh "docker rmi ${BACKEND_ECR}:${env.BACKEND_IMAGE_TAG}"
-                        echo "🚀 Pushing frontend Docker image to ECR"
-                        sh "docker push ${FRONTEND_ECR}:${env.FRONTEND_IMAGE_TAG}"
-                        sh "docker rmi ${FRONTEND_ECR}:${env.FRONTEND_IMAGE_TAG}"
-                    }
+                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+
+                    sh "docker push ${BACKEND_ECR}:${IMAGE_TAG}"
+                    sh "docker rmi ${BACKEND_ECR}:${IMAGE_TAG}"
+
+                    sh "docker push ${FRONTEND_ECR}:${IMAGE_TAG}"
+                    sh "docker rmi ${FRONTEND_ECR}:${IMAGE_TAG}"
                 }
             }
         }
 
         stage('Deploy to ECS') {
             steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    echo "🔄 Updating ECS backend service"
-                    sh """
-                    aws ecs update-service \
-                        --cluster ecommerce-project-cluster \
-                        --service ecommerce-project-backend-service \
-                        --force-new-deployment
-                    """
-                    echo "🔄 Updating ECS frontend service"
-                    sh """
-                    aws ecs update-service \
-                        --cluster ecommerce-project-cluster \
-                        --service ecommerce-project-frontend-service \
-                        --force-new-deployment
-                    """
-                    echo "⏳ Waiting for services to stabilize"
-                    sh """
-                    aws ecs wait services-stable \
-                        --cluster ecommerce-project-cluster \
-                        --services ecommerce-project-backend-service ecommerce-project-frontend-service \
-                        --region ${env.AWS_REGION}
-                    """
-                }
+                sh """
+                aws ecs update-service \
+                    --cluster ecommerce-project-cluster \
+                    --service ecommerce-project-backend-service \
+                    --force-new-deployment \
+                    --region ${AWS_REGION}
+                """
+
+                sh """
+                aws ecs update-service \
+                    --cluster ecommerce-project-cluster \
+                    --service ecommerce-project-frontend-service \
+                    --force-new-deployment \
+                    --region ${AWS_REGION}
+                """
+
+                sh """
+                aws ecs wait services-stable \
+                    --cluster ecommerce-project-cluster \
+                    --services ecommerce-project-backend-service ecommerce-project-frontend-service \
+                    --region ${AWS_REGION}
+                """
             }
+        }
+    }
+
+    post {
+        success {
+            echo "Deployment successful!"
+            echo "App URL: http://ecommerce-project-alb-1227317348.ap-south-1.elb.amazonaws.com"
+        }
+        failure {
+            echo "Deployment failed. Check logs."
         }
     }
 }
