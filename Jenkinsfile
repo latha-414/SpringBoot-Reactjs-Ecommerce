@@ -104,12 +104,12 @@ pipeline {
                     --force-new-deployment \
                     --region ${AWS_REGION}
                 """
-                sh """
-                aws ecs wait services-stable \
-                    --cluster ecommerce-project-cluster \
-                    --services ecommerce-project-backend-service ecommerce-project-frontend-service \
-                    --region ${AWS_REGION}
-                """
+                // sh """
+                // aws ecs wait services-stable \
+                //     --cluster ecommerce-project-cluster \
+                //     --services ecommerce-project-backend-service ecommerce-project-frontend-service \
+                //     --region ${AWS_REGION}
+                // """
             }
         }
     }
