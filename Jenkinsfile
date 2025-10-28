@@ -1,6 +1,5 @@
 pipeline {
     agent any
-
     environment {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
@@ -9,6 +8,34 @@ pipeline {
     }
 
     stages {
+        /* ---------------------------------------------------- */
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        /* ---------------------------------------------------- */
+        stage('Build Backend (Maven)') {
+            steps {
+                dir('Ecommerce-Backend') {
+                    echo "Building backend with Maven"
+                    sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
+                }
+            }
+        }
+
+        /* ---------------------------------------------------- */
+        stage('Build Frontend (npm)') {
+            steps {
+                dir('Ecommerce-Frontend') {
+                    echo "Building frontend"
+                    sh 'npm install && npm run build'
+                }
+            }
+        }
+
+        /* ---------------------------------------------------- */
         stage('Get AWS Account ID') {
             steps {
                 script {
@@ -21,10 +48,11 @@ pipeline {
             }
         }
 
+        /* ---------------------------------------------------- */
         stage('Build Docker Images') {
             steps {
                 script {
-                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def BACKEND_ECR  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
                     def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
 
                     sh "docker build -t ${BACKEND_ECR}:${IMAGE_TAG} Ecommerce-Backend/"
@@ -33,6 +61,7 @@ pipeline {
             }
         }
 
+        /* ---------------------------------------------------- */
         stage('Login to ECR') {
             steps {
                 script {
@@ -42,10 +71,11 @@ pipeline {
             }
         }
 
+        /* ---------------------------------------------------- */
         stage('Push Docker Images') {
             steps {
                 script {
-                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def BACKEND_ECR  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
                     def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
 
                     sh "docker push ${BACKEND_ECR}:${IMAGE_TAG}"
@@ -57,6 +87,7 @@ pipeline {
             }
         }
 
+        /* ---------------------------------------------------- */
         stage('Deploy to ECS') {
             steps {
                 sh """
@@ -66,7 +97,6 @@ pipeline {
                     --force-new-deployment \
                     --region ${AWS_REGION}
                 """
-
                 sh """
                 aws ecs update-service \
                     --cluster ecommerce-project-cluster \
@@ -74,7 +104,6 @@ pipeline {
                     --force-new-deployment \
                     --region ${AWS_REGION}
                 """
-
                 sh """
                 aws ecs wait services-stable \
                     --cluster ecommerce-project-cluster \
@@ -86,11 +115,7 @@ pipeline {
     }
 
     post {
-        success {
-            echo "Deployment successful!"
-        }
-        failure {
-            echo "Deployment failed. Check logs."
-        }
+        success { echo "Deployment successful!" }
+        failure { echo "Deployment failed. Check logs." }
     }
 }
