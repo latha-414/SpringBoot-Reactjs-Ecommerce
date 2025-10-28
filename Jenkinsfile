@@ -88,7 +88,6 @@ pipeline {
     post {
         success {
             echo "Deployment successful!"
-            echo "App URL: http://ecommerce-project-alb-1227317348.ap-south-1.elb.amazonaws.com"
         }
         failure {
             echo "Deployment failed. Check logs."
