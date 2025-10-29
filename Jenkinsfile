@@ -1,11 +1,13 @@
 pipeline {
     agent any
+
     environment {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
         AWS_REGION = 'ap-south-1'
         IMAGE_TAG = "${env.BUILD_NUMBER}"
     }
+
     stages {
         /* ---------------------------------------------------- */
         stage('Checkout') {
@@ -66,9 +68,7 @@ pipeline {
                     def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
                     def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
 
-                    echo "Scanning Docker images for HIGH/CRITICAL vulnerabilities..."
-
-                    // Fail build if HIGH or CRITICAL vulnerabilities found
+                    echo "Scanning images for HIGH/CRITICAL vulnerabilities..."
                     sh "trivy image --exit-code 1 --no-progress --severity HIGH,CRITICAL ${BACKEND_ECR}:${IMAGE_TAG}"
                     sh "trivy image --exit-code 1 --no-progress --severity HIGH,CRITICAL ${FRONTEND_ECR}:${IMAGE_TAG}"
                 }
@@ -125,10 +125,10 @@ pipeline {
             sh 'docker system prune -f || true'
             cleanWs(cleanWhenNotBuilt: false, deleteDirs: true)
         }
-        success { 
+        success {
             echo "Deployment successful! Image Tag: ${IMAGE_TAG}"
         }
-        failure { 
+        failure {
             echo "Deployment failed. Check logs."
         }
     }
