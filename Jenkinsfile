@@ -63,10 +63,15 @@ pipeline {
                     def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
 
                     echo "Scanning backend image for vulnerabilities..."
-                    sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${BACKEND_ECR}:${IMAGE_TAG} || true"
+                    // Scans with exit code 1 if vulnerabilities of severity HIGH or CRITICAL are found
+                    sh """ 
+                    trivy image --exit-code 1 --severity HIGH,CRITICAL ${BACKEND_ECR}:${IMAGE_TAG} || true
+                    """
 
                     echo "Scanning frontend image for vulnerabilities..."
-                    sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${FRONTEND_ECR}:${IMAGE_TAG} || true"
+                    sh """
+                    trivy image --exit-code 1 --severity HIGH,CRITICAL ${FRONTEND_ECR}:${IMAGE_TAG} || true
+                    """
                 }
             }
         }
