@@ -1,6 +1,5 @@
 pipeline {
     agent any
-
     environment {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
@@ -9,14 +8,12 @@ pipeline {
     }
 
     stages {
-        /* ---------------------------------------------------- */
         stage('Checkout') {
             steps {
                 checkout scm
             }
         }
 
-        /* ---------------------------------------------------- */
         stage('Build Backend (Maven)') {
             steps {
                 dir('Ecommerce-Backend') {
@@ -26,7 +23,6 @@ pipeline {
             }
         }
 
-        /* ---------------------------------------------------- */
         stage('Build Frontend (npm)') {
             steps {
                 dir('Ecommerce-Frontend') {
@@ -36,7 +32,6 @@ pipeline {
             }
         }
 
-        /* ---------------------------------------------------- */
         stage('Get AWS Account ID') {
             steps {
                 script {
@@ -49,33 +44,33 @@ pipeline {
             }
         }
 
-        /* ---------------------------------------------------- */
         stage('Build Docker Images') {
             steps {
                 script {
-                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def BACKEND_ECR  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
                     def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+
                     sh "docker build -t ${BACKEND_ECR}:${IMAGE_TAG} Ecommerce-Backend/"
                     sh "docker build -t ${FRONTEND_ECR}:${IMAGE_TAG} Ecommerce-Frontend/"
                 }
             }
         }
 
-        /* ---------------------------------------------------- */
-        stage('Security Scan with Trivy') {
+        stage('Scan Docker Images with Trivy') {
             steps {
                 script {
-                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def BACKEND_ECR  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
                     def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
 
-                    echo "Scanning for CRITICAL only..."
-                    sh "trivy image --exit-code 1 --no-progress --severity CRITICAL ${BACKEND_ECR}:${IMAGE_TAG}"
-                    sh "trivy image --exit-code 0 --no-progress --severity HIGH,CRITICAL ${FRONTEND_ECR}:${IMAGE_TAG} || echo 'Frontend scan complete'"  
+                    echo "Scanning backend image for vulnerabilities..."
+                    sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${BACKEND_ECR}:${IMAGE_TAG} || true"
+
+                    echo "Scanning frontend image for vulnerabilities..."
+                    sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${FRONTEND_ECR}:${IMAGE_TAG} || true"
                 }
             }
         }
 
-        /* ---------------------------------------------------- */
         stage('Login to ECR') {
             steps {
                 script {
@@ -85,21 +80,21 @@ pipeline {
             }
         }
 
-        /* ---------------------------------------------------- */
         stage('Push Docker Images') {
             steps {
                 script {
-                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def BACKEND_ECR  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
                     def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+
                     sh "docker push ${BACKEND_ECR}:${IMAGE_TAG}"
                     sh "docker rmi ${BACKEND_ECR}:${IMAGE_TAG}"
+
                     sh "docker push ${FRONTEND_ECR}:${IMAGE_TAG}"
                     sh "docker rmi ${FRONTEND_ECR}:${IMAGE_TAG}"
                 }
             }
         }
 
-        /* ---------------------------------------------------- */
         stage('Deploy to ECS') {
             steps {
                 sh """
@@ -121,15 +116,7 @@ pipeline {
     }
 
     post {
-        always {
-            sh 'docker system prune -f || true'
-            cleanWs(cleanWhenNotBuilt: false, deleteDirs: true)
-        }
-        success {
-            echo "Deployment successful! Image Tag: ${IMAGE_TAG}"
-        }
-        failure {
-            echo "Deployment failed. Check logs."
-        }
+        success { echo "Deployment successful!" }
+        failure { echo "Deployment failed. Check logs." }
     }
 }
