@@ -1,14 +1,17 @@
 pipeline {
     agent any
 
-    parameters {
-        choice(name: 'ENV', choices: ['dev', 'staging', 'prod'], description: 'Select deployment environment')
-    }
-
     environment {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
-        AWS_REGION = "${params.ENV == 'prod' ? 'ap-south-1' : 'us-east-1'}"
+        AWS_REGION = 'us-east-1'  // Set your fixed region here
+        BACKEND_REPO = 'ecommerce-project-backend'
+        FRONTEND_REPO = 'ecommerce-project-frontend'
+        CLUSTER = 'ecommerce-project-cluster'
+        BACKEND_SERVICE = 'ecommerce-project-backend-service'
+        FRONTEND_SERVICE = 'ecommerce-project-frontend-service'
+        BACKEND_FAMILY = 'ecommerce-backend-family'
+        FRONTEND_FAMILY = 'ecommerce-frontend-family'
     }
 
     stages {
@@ -99,24 +102,15 @@ pipeline {
 
         stage('Build Docker Images') {
             steps {
-                script {
-                    def BACKEND_REPO = "ecommerce-project-backend-${params.ENV}"
-                    def FRONTEND_REPO = "ecommerce-project-frontend-${params.ENV}"
-                    sh "docker build -t ${BACKEND_REPO}:${IMAGE_TAG} Ecommerce-Backend/"
-                    sh "docker build -t ${FRONTEND_REPO}:${IMAGE_TAG} Ecommerce-Frontend/"
-                }
+                sh "docker build -t ${BACKEND_REPO}:${IMAGE_TAG} Ecommerce-Backend/"
+                sh "docker build -t ${FRONTEND_REPO}:${IMAGE_TAG} Ecommerce-Frontend/"
             }
         }
 
         stage('Security Scan') {
             steps {
-                script {
-                    def BACKEND_LOCAL = "ecommerce-project-backend-${params.ENV}:${IMAGE_TAG}"
-                    def FRONTEND_LOCAL = "ecommerce-project-frontend-${params.ENV}:${IMAGE_TAG}"
-                    def severity = params.ENV == 'prod' ? 'HIGH,CRITICAL' : 'CRITICAL'
-                    sh "trivy image ${BACKEND_LOCAL} --exit-code 1 --no-progress --severity ${severity}"
-                    sh "trivy image ${FRONTEND_LOCAL} --exit-code 1 --no-progress --severity ${severity}"
-                }
+                sh "trivy image ${BACKEND_REPO}:${IMAGE_TAG} --exit-code 1 --no-progress --severity HIGH,CRITICAL"
+                sh "trivy image ${FRONTEND_REPO}:${IMAGE_TAG} --exit-code 1 --no-progress --severity HIGH,CRITICAL"
             }
         }
 
@@ -132,8 +126,6 @@ pipeline {
         stage('Tag and Push Docker Images') {
             steps {
                 script {
-                    def BACKEND_REPO = "ecommerce-project-backend-${params.ENV}"
-                    def FRONTEND_REPO = "ecommerce-project-frontend-${params.ENV}"
                     def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${BACKEND_REPO}"
                     def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${FRONTEND_REPO}"
 
@@ -157,14 +149,8 @@ pipeline {
         stage('Update ECS Task Definitions and Deploy') {
             steps {
                 script {
-                    def cluster = "ecommerce-project-cluster"
-                    def backendService = "ecommerce-project-backend-service"
-                    def frontendService = "ecommerce-project-frontend-service"
-                    def backendFamily = "ecommerce-backend-family"
-                    def frontendFamily = "ecommerce-frontend-family"
-
-                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend-${params.ENV}:${IMAGE_TAG}"
-                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend-${params.ENV}:${IMAGE_TAG}"
+                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${BACKEND_REPO}:${IMAGE_TAG}"
+                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${FRONTEND_REPO}:${IMAGE_TAG}"
 
                     def updateTaskDef = { family, image ->
                         def taskDef = sh(
@@ -191,16 +177,16 @@ pipeline {
                         return sh(script: "echo '${registered}' | jq -r .taskDefinition.taskDefinitionArn", returnStdout: true).trim()
                     }
 
-                    def backendTaskArn = updateTaskDef(backendFamily, BACKEND_ECR)
-                    def frontendTaskArn = updateTaskDef(frontendFamily, FRONTEND_ECR)
+                    def backendTaskArn = updateTaskDef(env.BACKEND_FAMILY, BACKEND_ECR)
+                    def frontendTaskArn = updateTaskDef(env.FRONTEND_FAMILY, FRONTEND_ECR)
 
                     sh """
                         set -e
-                        aws ecs update-service --cluster ${cluster} --service ${backendService} --task-definition ${backendTaskArn} --force-new-deployment --region ${AWS_REGION}
-                        aws ecs update-service --cluster ${cluster} --service ${frontendService} --task-definition ${frontendTaskArn} --force-new-deployment --region ${AWS_REGION}
+                        aws ecs update-service --cluster ${CLUSTER} --service ${BACKEND_SERVICE} --task-definition ${backendTaskArn} --force-new-deployment --region ${AWS_REGION}
+                        aws ecs update-service --cluster ${CLUSTER} --service ${FRONTEND_SERVICE} --task-definition ${frontendTaskArn} --force-new-deployment --region ${AWS_REGION}
                         aws ecs wait services-stable \
-                            --cluster ${cluster} \
-                            --services ${backendService} ${frontendService} \
+                            --cluster ${CLUSTER} \
+                            --services ${BACKEND_SERVICE} ${FRONTEND_SERVICE} \
                             --region ${AWS_REGION} \
                             --waiter-config '{"Delay":10,"MaxAttempts":30}'
                     """
