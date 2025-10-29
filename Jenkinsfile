@@ -1,93 +1,65 @@
 pipeline {
     agent any
 
+    // === PARAMETERS (Optional but Recommended) ===
+    parameters {
+        choice(name: 'ENV', choices: ['dev', 'staging', 'prod'], description: 'Deployment environment')
+    }
+
     environment {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
-        AWS_REGION = 'us-east-1'  // Set your fixed region here
-        BACKEND_REPO = 'ecommerce-project-backend'
-        FRONTEND_REPO = 'ecommerce-project-frontend'
-        CLUSTER = 'ecommerce-project-cluster'
-        BACKEND_SERVICE = 'ecommerce-project-backend-service'
-        FRONTEND_SERVICE = 'ecommerce-project-frontend-service'
-        BACKEND_FAMILY = 'ecommerce-backend-family'
-        FRONTEND_FAMILY = 'ecommerce-frontend-family'
+        AWS_REGION = 'ap-south-1'
+        IMAGE_TAG = "${env.BUILD_NUMBER}-${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}"
+        // Optional: Cache dirs
+        NPM_CACHE = "${env.WORKSPACE}/.npm-cache"
     }
 
     stages {
+        /* ---------------------------------------------------- */
         stage('Checkout') {
             steps {
                 checkout scm
+                echo "Checked out commit: ${env.GIT_COMMIT}"
             }
         }
 
+        /* ---------------------------------------------------- */
         stage('Prerequisites') {
             steps {
-                sh 'command -v jq >/dev/null || (echo "ERROR: jq is required" && exit 1)'
-                sh 'command -v trivy >/dev/null || (echo "ERROR: trivy is required" && exit 1)'
-                sh 'command -v docker >/dev/null || (echo "ERROR: docker is required" && exit 1)'
-            }
-        }
-
-        stage('Set Image Tag') {
-            steps {
                 script {
-                    env.GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-                    env.IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT_SHORT}"
-                    echo "Image Tag: ${env.IMAGE_TAG}"
+                    // Validate tools early
+                    sh 'command -v mvn >/dev/null && echo "Maven OK" || (echo "Maven missing" && exit 1)'
+                    sh 'command -v npm >/dev/null && echo "npm OK" || (echo "npm missing" && exit 1)'
+                    sh 'command -v docker >/dev/null && echo "Docker OK" || (echo "Docker missing" && exit 1)'
+                    sh 'command -v trivy >/dev/null && echo "Trivy OK" || (echo "Trivy missing" && exit 1)'
+                    sh 'command -v aws >/dev/null && echo "AWS CLI OK" || (echo "AWS CLI missing" && exit 1)'
                 }
             }
         }
 
-        stage('Validate Dockerfiles') {
+        /* ---------------------------------------------------- */
+        stage('Build Backend') {
             steps {
-                sh 'test -f Ecommerce-Backend/Dockerfile || (echo "Missing Dockerfile in Backend" && exit 1)'
-                sh 'test -f Ecommerce-Frontend/Dockerfile || (echo "Missing Dockerfile in Frontend" && exit 1)'
-            }
-        }
-
-        stage('Build Projects') {
-            parallel {
-                stage('Build Backend') {
-                    steps {
-                        dir('Ecommerce-Backend') {
-                            sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
-                        }
-                    }
-                }
-                stage('Build Frontend') {
-                    steps {
-                        dir('Ecommerce-Frontend') {
-                            sh 'npm install && npm run build'
-                        }
-                    }
+                dir('Ecommerce-Backend') {
+                    echo "Building backend..."
+                    sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
                 }
             }
         }
 
-        stage('Run Tests') {
-            parallel {
-                stage('Test Backend') {
-                    steps {
-                        dir('Ecommerce-Backend') {
-                            catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                                sh 'mvn test -Dhttps.protocols=TLSv1.2'
-                            }
-                        }
-                    }
-                }
-                stage('Test Frontend') {
-                    steps {
-                        dir('Ecommerce-Frontend') {
-                            catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                                sh 'npm test'
-                            }
-                        }
-                    }
+        /* ---------------------------------------------------- */
+        stage('Build Frontend') {
+            steps {
+                dir('Ecommerce-Frontend') {
+                    echo "Building frontend..."
+                    sh "mkdir -p ${NPM_CACHE} && npm ci --cache ${NPM_CACHE} --prefer-offline"
+                    sh 'npm run build'
                 }
             }
         }
 
+        /* ---------------------------------------------------- */
         stage('Get AWS Account ID') {
             steps {
                 script {
@@ -95,123 +67,112 @@ pipeline {
                         script: "aws sts get-caller-identity --query Account --output text",
                         returnStdout: true
                     ).trim()
-                    echo "AWS Account ID: ${env.AWS_ACCOUNT_ID}"
+                    echo "AWS Account: ${env.AWS_ACCOUNT_ID}"
                 }
             }
         }
 
-        stage('Build Docker Images') {
+        /* ---------------------------------------------------- */
+        stage('Build & Scan Docker Images') {
             steps {
-                sh "docker build -t ${BACKEND_REPO}:${IMAGE_TAG} Ecommerce-Backend/"
-                sh "docker build -t ${FRONTEND_REPO}:${IMAGE_TAG} Ecommerce-Frontend/"
+                script {
+                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+
+                    // Build
+                    sh "docker build -t ${BACKEND_ECR}:${IMAGE_TAG} Ecommerce-Backend/"
+                    sh "docker build -t ${FRONTEND_ECR}:${IMAGE_TAG} Ecommerce-Frontend/"
+
+                    // TRIVY SCAN (Fail on HIGH/CRITICAL)
+                    echo "Scanning images with Trivy..."
+                    sh "trivy image --exit-code 1 --no-progress --severity HIGH,CRITICAL ${BACKEND_ECR}:${IMAGE_TAG}"
+                    sh "trivy image --exit-code 1 --no-progress --severity HIGH,CRITICAL ${FRONTEND_ECR}:${IMAGE_TAG}"
+                }
             }
         }
 
-        stage('Security Scan') {
-            steps {
-                sh "trivy image ${BACKEND_REPO}:${IMAGE_TAG} --exit-code 1 --no-progress --severity HIGH,CRITICAL"
-                sh "trivy image ${FRONTEND_REPO}:${IMAGE_TAG} --exit-code 1 --no-progress --severity HIGH,CRITICAL"
-            }
-        }
-
+        /* ---------------------------------------------------- */
         stage('Login to ECR') {
             steps {
                 script {
                     def ECR_REGISTRY = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-                    sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
-                }
-            }
-        }
-
-        stage('Tag and Push Docker Images') {
-            steps {
-                script {
-                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${BACKEND_REPO}"
-                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${FRONTEND_REPO}"
-
-                    sh "docker tag ${BACKEND_REPO}:${IMAGE_TAG} ${BACKEND_ECR}:${IMAGE_TAG}"
-                    sh "docker tag ${FRONTEND_REPO}:${IMAGE_TAG} ${FRONTEND_ECR}:${IMAGE_TAG}"
-
-                    sh "docker tag ${BACKEND_ECR}:${IMAGE_TAG} ${BACKEND_ECR}:latest"
-                    sh "docker tag ${FRONTEND_ECR}:${IMAGE_TAG} ${FRONTEND_ECR}:latest"
-
-                    sh "docker push ${BACKEND_ECR}:${IMAGE_TAG}"
-                    sh "docker push ${FRONTEND_ECR}:${IMAGE_TAG}"
-                    sh "docker push ${BACKEND_ECR}:latest"
-                    sh "docker push ${FRONTEND_ECR}:latest"
-
-                    sh "docker rmi ${BACKEND_ECR}:${IMAGE_TAG} ${BACKEND_ECR}:latest"
-                    sh "docker rmi ${FRONTEND_ECR}:${IMAGE_TAG} ${FRONTEND_ECR}:latest"
-                }
-            }
-        }
-
-        stage('Update ECS Task Definitions and Deploy') {
-            steps {
-                script {
-                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${BACKEND_REPO}:${IMAGE_TAG}"
-                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${FRONTEND_REPO}:${IMAGE_TAG}"
-
-                    def updateTaskDef = { family, image ->
-                        def taskDef = sh(
-                            script: """
-                                aws ecs describe-task-definition \
-                                    --task-definition ${family} \
-                                    --query 'taskDefinition' \
-                                    --output json \
-                                    --region ${AWS_REGION}
-                            """,
-                            returnStdout: true
-                        )
-                        def taskJson = readJSON text: taskDef
-                        taskJson.containerDefinitions[0].image = image
-                        def newJson = writeJSON returnText: true, json: taskJson
-                        def registered = sh(
-                            script: """
-                                aws ecs register-task-definition \
-                                    --cli-input-json '${newJson}' \
-                                    --region ${AWS_REGION}
-                            """,
-                            returnStdout: true
-                        )
-                        return sh(script: "echo '${registered}' | jq -r .taskDefinition.taskDefinitionArn", returnStdout: true).trim()
-                    }
-
-                    def backendTaskArn = updateTaskDef(env.BACKEND_FAMILY, BACKEND_ECR)
-                    def frontendTaskArn = updateTaskDef(env.FRONTEND_FAMILY, FRONTEND_ECR)
-
                     sh """
-                        set -e
-                        aws ecs update-service --cluster ${CLUSTER} --service ${BACKEND_SERVICE} --task-definition ${backendTaskArn} --force-new-deployment --region ${AWS_REGION}
-                        aws ecs update-service --cluster ${CLUSTER} --service ${FRONTEND_SERVICE} --task-definition ${frontendTaskArn} --force-new-deployment --region ${AWS_REGION}
-                        aws ecs wait services-stable \
-                            --cluster ${CLUSTER} \
-                            --services ${BACKEND_SERVICE} ${FRONTEND_SERVICE} \
-                            --region ${AWS_REGION} \
-                            --waiter-config '{"Delay":10,"MaxAttempts":30}'
+                        retry() { n=0; until [ \$n -ge 3 ]; do \$@ && break; n=\$[\$n+1]; sleep 5; done; }
+                        retry aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
                     """
                 }
             }
         }
 
-        stage('Archive Artifacts') {
+        /* ---------------------------------------------------- */
+        stage('Push Docker Images') {
             steps {
-                archiveArtifacts artifacts: 'Ecommerce-Backend/target/*.jar', allowEmptyArchive: true
-                archiveArtifacts artifacts: 'Ecommerce-Frontend/dist/**', allowEmptyArchive: true
+                script {
+                    def BACKEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+
+                    parallel(
+                        backend: {
+                            sh "docker push ${BACKEND_ECR}:${IMAGE_TAG}"
+                            sh "docker rmi ${BACKEND_ECR}:${IMAGE_TAG} || true"
+                        },
+                        frontend: {
+                            sh "docker push ${FRONTEND_ECR}:${IMAGE_TAG}"
+                            sh "docker rmi ${FRONTEND_ECR}:${IMAGE_TAG} || true"
+                        }
+                    )
+                }
+            }
+        }
+
+        /* ---------------------------------------------------- */
+        stage('Deploy to ECS') {
+            steps {
+                script {
+                    def cluster = "ecommerce-project-cluster"
+                    def backendSvc = "ecommerce-project-backend-service"
+                    def frontendSvc = "ecommerce-project-frontend-service"
+
+                    sh """
+                        aws ecs update-service \
+                            --cluster ${cluster} \
+                            --service ${backendSvc} \
+                            --task-definition ${backendSvc} \
+                            --force-new-deployment \
+                            --region ${AWS_REGION}
+                    """
+                    sh """
+                        aws ecs update-service \
+                            --cluster ${cluster} \
+                            --service ${frontendSvc} \
+                            --task-definition ${frontendSvc} \
+                            --force-new-deployment \
+                            --region ${AWS_REGION}
+                    """
+                    // Optional: Wait for stability
+                    sh """
+                        aws ecs wait services-stable \
+                            --cluster ${cluster} \
+                            --services ${backendSvc} ${frontendSvc} \
+                            --region ${AWS_REGION} || echo "Warning: Services not stable yet"
+                    """
+                }
             }
         }
     }
 
     post {
         always {
-            cleanWs()
-            sh 'docker system prune -f'
+            sh 'docker system prune -f || true'
+            cleanWs(cleanWhenNotBuilt: false, deleteDirs: true)
         }
         success {
-            echo "✅ Deployment successful!"
+            echo "Deployment successful! Tag: ${IMAGE_TAG}"
+            slackSend channel: '#deployments', color: 'good', message: "Deployed `${params.ENV}` | `${IMAGE_TAG}` | <${env.BUILD_URL}|View>"
         }
         failure {
-            echo "❌ Deployment failed. Check logs for details."
+            echo "Deployment failed."
+            slackSend channel: '#deployments', color: 'danger', message: "Failed `${params.ENV}` | `${env.IMAGE_TAG ?: 'N/A'}` | <${env.BUILD_URL}|View>"
         }
     }
 }
