@@ -81,7 +81,7 @@ pipeline {
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
-                            --skip-java-db-update \
+                           # --skip-java-db-update \
                             --cache-dir "$TRIVY_CACHE_DIR" \
                             ${backendImage}
                     """
@@ -91,7 +91,7 @@ pipeline {
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
-                            --skip-java-db-update \
+                         #   --skip-java-db-update \
                             --cache-dir "$TRIVY_CACHE_DIR" \
                             ${frontendImage}
                     """
