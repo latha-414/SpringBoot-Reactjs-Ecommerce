@@ -76,22 +76,22 @@ pipeline {
                     def backendImage  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
                     def frontendImage = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
 
-                    echo "Scanning backend"
+                    echo "Scanning backend: ${backendImage}"
                     sh """
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
-                           # --skip-java-db-update \
+                            --skip-java-db-update \
                             --cache-dir "$TRIVY_CACHE_DIR" \
                             ${backendImage}
                     """
 
-                    echo "Scanning frontend"
+                    echo "Scanning frontend: ${frontendImage}"
                     sh """
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
-                         #   --skip-java-db-update \
+                            --skip-java-db-update \
                             --cache-dir "$TRIVY_CACHE_DIR" \
                             ${frontendImage}
                     """
