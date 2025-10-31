@@ -109,46 +109,47 @@ pipeline {
             }
         }
 
-        // FIXED TRIVY STAGE
+        // FINAL FIXED TRIVY STAGE
         stage('Scan with Trivy') {
             steps {
                 script {
-                    // 1. CLEAR TRIVY CACHE TO FREE SPACE
+                    // 1. CLEAR USER CACHE
                     sh '''
                         echo "Clearing Trivy cache..."
-                        rm -rf /var/lib/jenkins/.cache/trivy || true
-                        mkdir -p /var/lib/jenkins/.cache/trivy
+                        rm -rf ~/.cache/trivy || true
+                        mkdir -p ~/.cache/trivy
                     '''
 
-                    // 2. INSTALL TRIVY
+                    // 2. INSTALL LATEST TRIVY IN USER HOME (NO SUDO)
                     sh '''
-                        echo "Installing Trivy..."
+                        echo "Installing latest Trivy to ~/bin..."
+                        mkdir -p ~/bin
                         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-                            | sh -s -- -b /usr/local/bin v0.53.0
-                        trivy --version
+                            | sh -s -- -b ~/bin latest
+                        ~/bin/trivy --version
                     '''
 
                     def backendImage  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
                     def frontendImage = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
 
-                    // 3. SCAN WITHOUT JAVA DB (SAVE 800MB+)
+                    // 3. SCAN WITH LATEST + SKIP JAVA DB
                     echo "Scanning backend (skip Java DB)"
                     sh """
-                        trivy image \
+                        ~/bin/trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
                             --skip-java-db \
-                            --cache-dir /var/lib/jenkins/.cache/trivy \
+                            --cache-dir ~/.cache/trivy \
                             ${backendImage}
                     """
 
                     echo "Scanning frontend"
                     sh """
-                        trivy image \
+                        ~/bin/trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
                             --skip-java-db \
-                            --cache-dir /var/lib/jenkins/.cache/trivy \
+                            --cache-dir ~/.cache/trivy \
                             ${frontendImage}
                     """
                 }
@@ -172,19 +173,16 @@ pipeline {
 
     post {
         always {
-            script {
-                def backend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-                def frontend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
-                echo "Cleaning up local Docker images"
-                sh """
-                    docker rmi ${backend}:${IMAGE_TAG} || true
-                    docker rmi ${backend}:latest || true
-                    docker rmi ${frontend}:${IMAGE_TAG} || true
-                    docker rmi ${frontend}:latest || true
-                    docker system prune -af || true
-                    rm -rf /var/lib/jenkins/.cache/trivy || true
-                """
-            }
+            sh '''
+                echo "Cleaning up..."
+                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG} || true
+                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:latest || true
+                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG} || true
+                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:latest || true
+                docker system prune -af || true
+                rm -rf ~/.cache/trivy || true
+                rm -rf ~/bin/trivy || true
+            '''
         }
         success {
             echo "DEPLOYMENT SUCCESSFUL! Tag: ${IMAGE_TAG}"
