@@ -59,7 +59,7 @@ pipeline {
             }
         }
 
-        // FINAL TRIVY STAGE — NO JAVA DB, USER CACHE
+        // FINAL TRIVY STAGE — IMAGE NAME + USER CACHE + SKIP JAVA DB
         stage('Scan with Trivy') {
             steps {
                 script {
