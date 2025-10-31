@@ -10,28 +10,30 @@ pipeline {
         timeout(time: 30, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
-
     stages {
         stage('Checkout') { steps { checkout scm } }
 
         stage('Build & Test Backend') {
             parallel {
-                stage('Build') { steps { dir('Ecommerce-Backend') { sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2' } } }
-                stage('Test')  { steps { dir('Ecommerce-Backend') { sh 'mvn test -Dhttps.protocols=TLSv1.2' } } }
+                stage('Build Backend') { steps { dir('Ecommerce-Backend') { sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2' } } }
+                stage('Test Backend')  { steps { dir('Ecommerce-Backend') { sh 'mvn test -Dhttps.protocols=TLSv1.2' } } }
             }
         }
 
         stage('Build & Test Frontend') {
             parallel {
-                stage('Build') { steps { dir('Ecommerce-Frontend') { sh 'npm ci && npm run build' } } }
-                stage('Test')  { steps { dir('Ecommerce-Frontend') { sh 'npm test || true' } } }
+                stage('Build Frontend') { steps { dir('Ecommerce-Frontend') { sh 'npm ci && npm run build' } } }
+                stage('Test Frontend')  { steps { dir('Ecommerce-Frontend') { sh 'npm test || true' } } }
             }
         }
 
         stage('Get AWS Account ID') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-jenkins-creds']]) {
-                    script { env.AWS_ACCOUNT_ID = sh(script: 'aws sts get-caller-identity --query Account --output text', returnStdout: true).trim() }
+                    script { 
+                        env.AWS_ACCOUNT_ID = sh(script: 'aws sts get-caller-identity --query Account --output text', returnStdout: true).trim()
+                        echo "AWS Account: ${env.AWS_ACCOUNT_ID}"
+                    }
                 }
             }
         }
@@ -56,18 +58,11 @@ pipeline {
             }
         }
 
-        // FINAL TRIVY STAGE — NO JAVA DB, NO DISK FULL
+        // FINAL TRIVY STAGE — LET FIRST RUN DOWNLOAD DB
         stage('Scan with Trivy') {
             steps {
                 script {
-                    // 1. CLEAR & USE USER CACHE
-                    sh '''
-                        echo "Clearing Trivy cache..."
-                        rm -rf ~/.cache/trivy || true
-                        mkdir -p ~/.cache/trivy
-                    '''
-
-                    // 2. INSTALL LATEST TRIVY
+                    // 1. INSTALL TRIVY (LET IT DOWNLOAD DB ON FIRST RUN)
                     sh '''
                         echo "Installing Trivy..."
                         mkdir -p ~/bin
@@ -79,26 +74,22 @@ pipeline {
                     def backendImage  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
                     def frontendImage = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
 
-                    // 3. SCAN — SKIP JAVA DB + OFFLINE DB UPDATE
+                    // 2. SCAN — ALLOW DB DOWNLOAD ON FIRST RUN
+                    echo "Scanning backend"
                     sh """
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
-                            --skip-db-update \
-                            --skip-java-db-update \
                             --cache-dir ~/.cache/trivy \
-                            --offline-scan \
                             ${backendImage}
                     """
 
+                    echo "Scanning frontend"
                     sh """
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
-                            --skip-db-update \
-                            --skip-java-db-update \
                             --cache-dir ~/.cache/trivy \
-                            --offline-scan \
                             ${frontendImage}
                     """
                 }
@@ -107,28 +98,6 @@ pipeline {
 
         stage('Deploy to ECS') {
             steps {
-                sh """
-                    aws ecs update-service --cluster ecommerce-project-cluster --service ecommerce-project-backend-service --force-new-deployment --region ${AWS_REGION}
-                    aws ecs update-service --cluster ecommerce-project-cluster --service ecommerce-project-frontend-service --force-new-deployment --region ${AWS_REGION}
-                """
-            }
-        }
-    }
-
-    post {
-        always {
-            sh '''
-                echo "Cleaning up..."
-                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG} || true
-                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:latest || true
-                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG} || true
-                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:latest || true
-                docker system prune -af || true
-                rm -rf ~/.cache/trivy || true
-                rm -rf ~/bin/trivy || true
-            '''
-        }
-        success { echo "DEPLOYMENT SUCCESSFUL! Tag: ${IMAGE_TAG}" }
-        failure { echo "Deployment failed." }
-    }
-}
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-jenkins-creds']]) {
+                    sh """
+                        aws ecs update-service --cluster ecommerce-project-cluster --service ecommerce
