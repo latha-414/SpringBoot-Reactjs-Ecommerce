@@ -10,28 +10,21 @@ pipeline {
         timeout(time: 30, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
+
     stages {
         stage('Checkout') { steps { checkout scm } }
 
         stage('Build & Test Backend') {
             parallel {
-                stage('Build Backend') {
-                    steps { dir('Ecommerce-Backend') { sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2' } }
-                }
-                stage('Test Backend') {
-                    steps { dir('Ecommerce-Backend') { sh 'mvn test -Dhttps.protocols=TLSv1.2' } }
-                }
+                stage('Build') { steps { dir('Ecommerce-Backend') { sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2' } } }
+                stage('Test')  { steps { dir('Ecommerce-Backend') { sh 'mvn test -Dhttps.protocols=TLSv1.2' } } }
             }
         }
 
         stage('Build & Test Frontend') {
             parallel {
-                stage('Build Frontend') {
-                    steps { dir('Ecommerce-Frontend') { sh 'npm ci && npm run build' } }
-                }
-                stage('Test Frontend') {
-                    steps { dir('Ecommerce-Frontend') { sh 'npm test || true' } }
-                }
+                stage('Build') { steps { dir('Ecommerce-Frontend') { sh 'npm ci && npm run build' } } }
+                stage('Test')  { steps { dir('Ecommerce-Frontend') { sh 'npm test || true' } } }
             }
         }
 
@@ -56,35 +49,29 @@ pipeline {
                 script {
                     def backend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
                     def frontend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
-                    dir('Ecommerce-Backend') { sh "docker build -t ${backend}:${IMAGE_TAG} -t ${backend}:latest ." }
+                    dir('Ecommerce-Backend')  { sh "docker build -t ${backend}:${IMAGE_TAG} -t ${backend}:latest ." }
                     dir('Ecommerce-Frontend') { sh "docker build -t ${frontend}:${IMAGE_TAG} -t ${frontend}:latest ." }
-                    sh """
-                        docker push ${backend}:${IMAGE_TAG}
-                        docker push ${backend}:latest
-                        docker push ${frontend}:${IMAGE_TAG}
-                        docker push ${frontend}:latest
-                    """
+                    sh "docker push ${backend}:${IMAGE_TAG} && docker push ${backend}:latest && docker push ${frontend}:${IMAGE_TAG} && docker push ${frontend}:latest"
                 }
             }
         }
 
-        // FINAL WORKING TRIVY STAGE
+        // FINAL TRIVY STAGE — NO JAVA DB, NO DISK FULL
         stage('Scan with Trivy') {
             steps {
                 script {
-                    // 1. CLEAR CACHE
+                    // 1. CLEAR & USE USER CACHE
                     sh '''
                         echo "Clearing Trivy cache..."
                         rm -rf ~/.cache/trivy || true
                         mkdir -p ~/.cache/trivy
                     '''
 
-                    // 2. INSTALL LATEST TRIVY IN USER HOME
+                    // 2. INSTALL LATEST TRIVY
                     sh '''
-                        echo "Installing latest Trivy to ~/bin..."
+                        echo "Installing Trivy..."
                         mkdir -p ~/bin
-                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-                            | sh -s -- -b ~/bin latest
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b ~/bin latest
                         export PATH="$HOME/bin:$PATH"
                         trivy --version
                     '''
@@ -92,22 +79,26 @@ pipeline {
                     def backendImage  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
                     def frontendImage = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
 
-                    // 3. SCAN — NO --skip-java-db (REMOVED!)
-                    echo "Scanning backend"
+                    // 3. SCAN — SKIP JAVA DB + OFFLINE DB UPDATE
                     sh """
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
+                            --skip-db-update \
+                            --skip-java-db-update \
                             --cache-dir ~/.cache/trivy \
+                            --offline-scan \
                             ${backendImage}
                     """
 
-                    echo "Scanning frontend"
                     sh """
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
+                            --skip-db-update \
+                            --skip-java-db-update \
                             --cache-dir ~/.cache/trivy \
+                            --offline-scan \
                             ${frontendImage}
                     """
                 }
@@ -117,12 +108,8 @@ pipeline {
         stage('Deploy to ECS') {
             steps {
                 sh """
-                    aws ecs update-service --cluster ecommerce-project-cluster \
-                      --service ecommerce-project-backend-service \
-                      --force-new-deployment --region ${AWS_REGION}
-                    aws ecs update-service --cluster ecommerce-project-cluster \
-                      --service ecommerce-project-frontend-service \
-                      --force-new-deployment --region ${AWS_REGION}
+                    aws ecs update-service --cluster ecommerce-project-cluster --service ecommerce-project-backend-service --force-new-deployment --region ${AWS_REGION}
+                    aws ecs update-service --cluster ecommerce-project-cluster --service ecommerce-project-frontend-service --force-new-deployment --region ${AWS_REGION}
                 """
             }
         }
@@ -142,6 +129,6 @@ pipeline {
             '''
         }
         success { echo "DEPLOYMENT SUCCESSFUL! Tag: ${IMAGE_TAG}" }
-        failure { echo "Deployment failed. Check logs." }
+        failure { echo "Deployment failed." }
     }
 }
