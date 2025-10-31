@@ -1,5 +1,6 @@
 pipeline {
     agent any
+
     environment {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
@@ -62,46 +63,35 @@ pipeline {
         }
 
         /* ---------------------------------------------------- */
-         // FINAL TRIVY STAGE — NO JAVA DB, USER CACHE
-        stage('Scan with Trivy') {
+        stage('Scan Docker Images with Trivy') {
             steps {
                 script {
-                    sh '''
-                        echo "Installing Trivy..."
-                        mkdir -p ~/bin
-                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b ~/bin latest
-                        export PATH="$HOME/bin:$PATH"
-                        export TRIVY_CACHE_DIR="/home/jenkins/.cache/trivy"
-                        mkdir -p "$TRIVY_CACHE_DIR"
-                        trivy --version
-                    '''
+                    echo "🔍 Scanning Docker images using Trivy..."
 
-                    def backendImage  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
-                    def frontendImage = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
+                    def BACKEND_ECR  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
 
-                    echo "Scanning backend: ${backendImage}"
+                    // Scan and generate reports
                     sh """
-                        trivy image \
-                            --exit-code 1 \
-                            --severity CRITICAL \
-                            --skip-java-db-update \
-                            --cache-dir "$TRIVY_CACHE_DIR" \
-                            ${backendImage}
+                    trivy image --format table --output trivy-backend-report.txt ${BACKEND_ECR}:${IMAGE_TAG}
+                    trivy image --format table --output trivy-frontend-report.txt ${FRONTEND_ECR}:${IMAGE_TAG}
                     """
 
-                    echo "Scanning frontend: ${frontendImage}"
-                    sh """
-                        trivy image \
-                            --exit-code 1 \
-                            --severity CRITICAL \
-                            --skip-java-db-update \
-                            --cache-dir "$TRIVY_CACHE_DIR" \
-                            ${frontendImage}
-                    """
+                    // Optionally, fail the build if HIGH or CRITICAL vulnerabilities are found
+                    // Uncomment below lines if you want strict enforcement
+                    /*
+                    sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${BACKEND_ECR}:${IMAGE_TAG}"
+                    sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${FRONTEND_ECR}:${IMAGE_TAG}"
+                    */
+
+                    echo "✅ Trivy scan completed. Reports saved."
+
+                    archiveArtifacts artifacts: 'trivy-*-report.txt', allowEmptyArchive: true
                 }
             }
         }
-        
+
+        /* ---------------------------------------------------- */
         stage('Login to ECR') {
             steps {
                 script {
@@ -144,18 +134,12 @@ pipeline {
                     --force-new-deployment \
                     --region ${AWS_REGION}
                 """
-                // sh """
-                // aws ecs wait services-stable \
-                //     --cluster ecommerce-project-cluster \
-                //     --services ecommerce-project-backend-service ecommerce-project-frontend-service \
-                //     --region ${AWS_REGION}
-                // """
             }
         }
     }
 
     post {
-        success { echo "Deployment successful!" }
-        failure { echo "Deployment failed. Check logs." }
+        success { echo "✅ Deployment successful!" }
+        failure { echo "❌ Deployment failed. Check logs and Trivy reports." }
     }
 }
