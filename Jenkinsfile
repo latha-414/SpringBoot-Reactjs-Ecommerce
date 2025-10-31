@@ -58,7 +58,7 @@ pipeline {
             }
         }
 
-        // FINAL TRIVY STAGE — ALLOW FIRST RUN, SKIP JAVA DB AFTER
+        // FINAL TRIVY STAGE — USER CACHE + SKIP JAVA DB AFTER FIRST RUN
         stage('Scan with Trivy') {
             steps {
                 script {
@@ -73,7 +73,7 @@ pipeline {
                     def backendImage  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
                     def frontendImage = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
 
-                    // Check if Java DB exists → skip update if yes
+                    // Check if Java DB exists in USER cache
                     def skipJavaDb = sh(script: "test -f ~/.cache/trivy/java-db/trivy-java.db && echo true || echo false", returnStdout: true).trim()
 
                     echo "Scanning backend"
@@ -117,6 +117,7 @@ pipeline {
                 def backend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
                 def frontend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
                 sh """
+                    echo "Cleaning up..."
                     docker rmi ${backend}:${IMAGE_TAG} || true
                     docker rmi ${backend}:latest || true
                     docker rmi ${frontend}:${IMAGE_TAG} || true
