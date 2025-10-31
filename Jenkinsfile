@@ -33,7 +33,6 @@ pipeline {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-jenkins-creds']]) {
                     script { 
                         env.AWS_ACCOUNT_ID = sh(script: 'aws sts get-caller-identity --query Account --output text', returnStdout: true).trim()
-                        echo "AWS Account: ${env.AWS_ACCOUNT_ID}"
                     }
                 }
             }
@@ -59,11 +58,10 @@ pipeline {
             }
         }
 
-        // FINAL TRIVY STAGE — SKIP JAVA DB + OFFLINE AFTER FIRST RUN
+        // FINAL TRIVY STAGE — ALLOW FIRST RUN, SKIP JAVA DB AFTER
         stage('Scan with Trivy') {
             steps {
                 script {
-                    // 1. INSTALL TRIVY + SET USER CACHE
                     sh '''
                         echo "Installing Trivy..."
                         mkdir -p ~/bin
@@ -75,13 +73,15 @@ pipeline {
                     def backendImage  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
                     def frontendImage = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
 
-                    // 2. SCAN — ALLOW FIRST RUN, SKIP JAVA DB
+                    // Check if Java DB exists → skip update if yes
+                    def skipJavaDb = sh(script: "test -f ~/.cache/trivy/java-db/trivy-java.db && echo true || echo false", returnStdout: true).trim()
+
                     echo "Scanning backend"
                     sh """
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
-                            --skip-java-db-update \
+                            ${skipJavaDb == 'true' ? '--skip-java-db-update' : ''} \
                             --cache-dir ~/.cache/trivy \
                             ${backendImage}
                     """
@@ -91,7 +91,7 @@ pipeline {
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
-                            --skip-java-db-update \
+                            ${skipJavaDb == 'true' ? '--skip-java-db-update' : ''} \
                             --cache-dir ~/.cache/trivy \
                             ${frontendImage}
                     """
@@ -113,16 +113,19 @@ pipeline {
 
     post {
         always {
-            sh '''
-                echo "Cleaning up..."
-                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG} || true
-                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:latest || true
-                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG} || true
-                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:latest || true
-                docker system prune -af || true
-                rm -rf ~/.cache/trivy || true
-                rm -rf ~/bin/trivy || true
-            '''
+            script {
+                def backend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                def frontend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+                sh """
+                    docker rmi ${backend}:${IMAGE_TAG} || true
+                    docker rmi ${backend}:latest || true
+                    docker rmi ${frontend}:${IMAGE_TAG} || true
+                    docker rmi ${frontend}:latest || true
+                    docker system prune -af || true
+                    rm -rf ~/.cache/trivy || true
+                    rm -rf ~/bin/trivy || true
+                """
+            }
         }
         success { echo "DEPLOYMENT SUCCESSFUL! Tag: ${IMAGE_TAG}" }
         failure { echo "Deployment failed." }
