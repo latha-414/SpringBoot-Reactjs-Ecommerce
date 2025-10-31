@@ -12,62 +12,27 @@ pipeline {
     }
 
     stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
+        stage('Checkout') { steps { checkout scm } }
 
         stage('Build & Test Backend') {
             parallel {
-                stage('Build Backend') {
-                    steps {
-                        dir('Ecommerce-Backend') {
-                            echo "Building backend"
-                            sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
-                        }
-                    }
-                }
-                stage('Test Backend') {
-                    steps {
-                        dir('Ecommerce-Backend') {
-                            echo "Running backend tests"
-                            sh 'mvn test -Dhttps.protocols=TLSv1.2'
-                        }
-                    }
-                }
+                stage('Build') { steps { dir('Ecommerce-Backend') { sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2' } } }
+                stage('Test')  { steps { dir('Ecommerce-Backend') { sh 'mvn test -Dhttps.protocols=TLSv1.2' } } }
             }
         }
 
         stage('Build & Test Frontend') {
             parallel {
-                stage('Build Frontend') {
-                    steps {
-                        dir('Ecommerce-Frontend') {
-                            echo "Building frontend"
-                            sh 'npm ci && npm run build'
-                        }
-                    }
-                }
-                stage('Test Frontend') {
-                    steps {
-                        dir('Ecommerce-Frontend') {
-                            echo "Running frontend tests"
-                            sh 'npm test || echo "Frontend tests failed, continuing..."'
-                        }
-                    }
-                }
+                stage('Build') { steps { dir('Ecommerce-Frontend') { sh 'npm ci && npm run build' } } }
+                stage('Test')  { steps { dir('Ecommerce-Frontend') { sh 'npm test || true' } } }
             }
         }
 
         stage('Get AWS Account ID') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-jenkins-creds']]) {
-                    script {
-                        env.AWS_ACCOUNT_ID = sh(
-                            script: 'aws sts get-caller-identity --query Account --output text',
-                            returnStdout: true
-                        ).trim()
+                    script { 
+                        env.AWS_ACCOUNT_ID = sh(script: 'aws sts get-caller-identity --query Account --output text', returnStdout: true).trim()
                         echo "AWS Account: ${env.AWS_ACCOUNT_ID}"
                     }
                 }
@@ -77,10 +42,7 @@ pipeline {
         stage('Login to ECR') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-jenkins-creds']]) {
-                    sh """
-                        aws ecr get-login-password --region ${AWS_REGION} | \
-                        docker login --username AWS --password-stdin ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
-                    """
+                    sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
                 }
             }
         }
@@ -90,33 +52,22 @@ pipeline {
                 script {
                     def backend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
                     def frontend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
-
-                    dir('Ecommerce-Backend') {
-                        sh "docker build -t ${backend}:${IMAGE_TAG} -t ${backend}:latest ."
-                    }
-                    dir('Ecommerce-Frontend') {
-                        sh "docker build -t ${frontend}:${IMAGE_TAG} -t ${frontend}:latest ."
-                    }
-
-                    sh """
-                        docker push ${backend}:${IMAGE_TAG}
-                        docker push ${backend}:latest
-                        docker push ${frontend}:${IMAGE_TAG}
-                        docker push ${frontend}:latest
-                    """
+                    dir('Ecommerce-Backend')  { sh "docker build -t ${backend}:${IMAGE_TAG} -t ${backend}:latest ." }
+                    dir('Ecommerce-Frontend') { sh "docker build -t ${frontend}:${IMAGE_TAG} -t ${frontend}:latest ." }
+                    sh "docker push ${backend}:${IMAGE_TAG} && docker push ${backend}:latest && docker push ${frontend}:${IMAGE_TAG} && docker push ${frontend}:latest"
                 }
             }
         }
 
+        // FINAL TRIVY STAGE — SKIP JAVA DB + OFFLINE AFTER FIRST RUN
         stage('Scan with Trivy') {
             steps {
                 script {
-                    // Install Trivy in user home
+                    // 1. INSTALL TRIVY + SET USER CACHE
                     sh '''
                         echo "Installing Trivy..."
                         mkdir -p ~/bin
-                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-                            | sh -s -- -b ~/bin latest
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b ~/bin latest
                         export PATH="$HOME/bin:$PATH"
                         trivy --version
                     '''
@@ -124,12 +75,13 @@ pipeline {
                     def backendImage  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
                     def frontendImage = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
 
-                    // Allow DB download on first run, skip Java DB if possible
+                    // 2. SCAN — ALLOW FIRST RUN, SKIP JAVA DB
                     echo "Scanning backend"
                     sh """
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
+                            --skip-java-db-update \
                             --cache-dir ~/.cache/trivy \
                             ${backendImage}
                     """
@@ -139,6 +91,7 @@ pipeline {
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
+                            --skip-java-db-update \
                             --cache-dir ~/.cache/trivy \
                             ${frontendImage}
                     """
@@ -150,13 +103,8 @@ pipeline {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-jenkins-creds']]) {
                     sh """
-                        aws ecs update-service --cluster ecommerce-project-cluster \
-                          --service ecommerce-project-backend-service \
-                          --force-new-deployment --region ${AWS_REGION}
-
-                        aws ecs update-service --cluster ecommerce-project-cluster \
-                          --service ecommerce-project-frontend-service \
-                          --force-new-deployment --region ${AWS_REGION}
+                        aws ecs update-service --cluster ecommerce-project-cluster --service ecommerce-project-backend-service --force-new-deployment --region ${AWS_REGION}
+                        aws ecs update-service --cluster ecommerce-project-cluster --service ecommerce-project-frontend-service --force-new-deployment --region ${AWS_REGION}
                     """
                 }
             }
@@ -165,25 +113,18 @@ pipeline {
 
     post {
         always {
-            script {
-                def backend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-                def frontend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
-                sh """
-                    docker rmi ${backend}:${IMAGE_TAG} || true
-                    docker rmi ${backend}:latest || true
-                    docker rmi ${frontend}:${IMAGE_TAG} || true
-                    docker rmi ${frontend}:latest || true
-                    docker system prune -af || true
-                    rm -rf ~/.cache/trivy || true
-                    rm -rf ~/bin/trivy || true
-                """
-            }
+            sh '''
+                echo "Cleaning up..."
+                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG} || true
+                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:latest || true
+                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG} || true
+                docker rmi ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:latest || true
+                docker system prune -af || true
+                rm -rf ~/.cache/trivy || true
+                rm -rf ~/bin/trivy || true
+            '''
         }
-        success {
-            echo "DEPLOYMENT SUCCESSFUL! Tag: ${IMAGE_TAG}"
-        }
-        failure {
-            echo "Deployment failed. Check logs."
-        }
+        success { echo "DEPLOYMENT SUCCESSFUL! Tag: ${IMAGE_TAG}" }
+        failure { echo "Deployment failed." }
     }
 }
