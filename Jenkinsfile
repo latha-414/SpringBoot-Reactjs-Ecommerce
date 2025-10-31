@@ -62,17 +62,42 @@ pipeline {
         }
 
         /* ---------------------------------------------------- */
-         stage('Scan with Trivy') {
+         // FINAL TRIVY STAGE — NO JAVA DB, USER CACHE
+        stage('Scan with Trivy') {
             steps {
                 script {
-                    def BACKEND_IMAGE  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
-                    def FRONTEND_IMAGE = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
+                    sh '''
+                        echo "Installing Trivy..."
+                        mkdir -p ~/bin
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b ~/bin latest
+                        export PATH="$HOME/bin:$PATH"
+                        export TRIVY_CACHE_DIR="/home/jenkins/.cache/trivy"
+                        mkdir -p "$TRIVY_CACHE_DIR"
+                        trivy --version
+                    '''
 
-                    echo "Scanning backend image for CRITICAL vulnerabilities"
-                    sh "trivy image --exit-code 1 --severity CRITICAL ${BACKEND_IMAGE}"
+                    def backendImage  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
+                    def frontendImage = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
 
-                    echo "Scanning frontend image for CRITICAL vulnerabilities"
-                    sh "trivy image --exit-code 1 --severity CRITICAL ${FRONTEND_IMAGE}"
+                    echo "Scanning backend: ${backendImage}"
+                    sh """
+                        trivy image \
+                            --exit-code 1 \
+                            --severity CRITICAL \
+                            --skip-java-db-update \
+                            --cache-dir "$TRIVY_CACHE_DIR" \
+                            ${backendImage}
+                    """
+
+                    echo "Scanning frontend: ${frontendImage}"
+                    sh """
+                        trivy image \
+                            --exit-code 1 \
+                            --severity CRITICAL \
+                            --skip-java-db-update \
+                            --cache-dir "$TRIVY_CACHE_DIR" \
+                            ${frontendImage}
+                    """
                 }
             }
         }
