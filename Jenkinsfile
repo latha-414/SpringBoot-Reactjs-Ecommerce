@@ -120,13 +120,13 @@ pipeline {
                         mkdir -p /var/lib/jenkins/.cache/trivy
                     '''
 
-                    // // 2. INSTALL TRIVY
-                    // sh '''
-                    //     echo "Installing Trivy..."
-                    //     curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-                    //         | sh -s -- -b /usr/local/bin v0.53.0
-                    //     trivy --version
-                    // '''
+                    // 2. INSTALL TRIVY
+                    sh '''
+                        echo "Installing Trivy..."
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+                            | sh -s -- -b /usr/local/bin v0.53.0
+                        trivy --version
+                    '''
 
                     def backendImage  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
                     def frontendImage = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
