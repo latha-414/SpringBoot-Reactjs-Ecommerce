@@ -62,6 +62,21 @@ pipeline {
         }
 
         /* ---------------------------------------------------- */
+         stage('Scan with Trivy') {
+            steps {
+                script {
+                    def BACKEND_IMAGE  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
+                    def FRONTEND_IMAGE = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
+
+                    echo "Scanning backend image for CRITICAL vulnerabilities"
+                    sh "trivy image --exit-code 1 --severity CRITICAL ${BACKEND_IMAGE}"
+
+                    echo "Scanning frontend image for CRITICAL vulnerabilities"
+                    sh "trivy image --exit-code 1 --severity CRITICAL ${FRONTEND_IMAGE}"
+                }
+            }
+        }
+        
         stage('Login to ECR') {
             steps {
                 script {
