@@ -5,6 +5,7 @@ pipeline {
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
         AWS_REGION = 'ap-south-1'
         IMAGE_TAG = "${env.GIT_COMMIT.take(7)}-${env.BUILD_NUMBER}"
+        TRIVY_CACHE_DIR = '~/.cache/trivy'
     }
     options {
         timeout(time: 30, unit: 'MINUTES')
@@ -58,7 +59,7 @@ pipeline {
             }
         }
 
-        // FINAL TRIVY STAGE — USER CACHE + SKIP JAVA DB AFTER FIRST RUN
+        // FINAL TRIVY STAGE — NO JAVA DB, USER CACHE
         stage('Scan with Trivy') {
             steps {
                 script {
@@ -67,22 +68,21 @@ pipeline {
                         mkdir -p ~/bin
                         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b ~/bin latest
                         export PATH="$HOME/bin:$PATH"
+                        export TRIVY_CACHE_DIR="$HOME/.cache/trivy"
+                        mkdir -p "$TRIVY_CACHE_DIR"
                         trivy --version
                     '''
 
                     def backendImage  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
                     def frontendImage = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
 
-                    // Check if Java DB exists in USER cache
-                    def skipJavaDb = sh(script: "test -f ~/.cache/trivy/java-db/trivy-java.db && echo true || echo false", returnStdout: true).trim()
-
                     echo "Scanning backend"
                     sh """
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
-                            ${skipJavaDb == 'true' ? '--skip-java-db-update' : ''} \
-                            --cache-dir ~/.cache/trivy \
+                            --skip-java-db-update \
+                            --cache-dir "$TRIVY_CACHE_DIR" \
                             ${backendImage}
                     """
 
@@ -91,8 +91,8 @@ pipeline {
                         trivy image \
                             --exit-code 1 \
                             --severity CRITICAL \
-                            ${skipJavaDb == 'true' ? '--skip-java-db-update' : ''} \
-                            --cache-dir ~/.cache/trivy \
+                            --skip-java-db-update \
+                            --cache-dir "$TRIVY_CACHE_DIR" \
                             ${frontendImage}
                     """
                 }
