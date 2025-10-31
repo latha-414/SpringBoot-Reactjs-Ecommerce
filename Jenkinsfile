@@ -1,10 +1,16 @@
 pipeline {
     agent any
+
     environment {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
         AWS_REGION = 'ap-south-1'
-        IMAGE_TAG = "${env.BUILD_NUMBER}"
+        IMAGE_TAG = "${env.GIT_COMMIT.take(7)}-${env.BUILD_NUMBER}"
+    }
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
     stages {
@@ -14,114 +20,149 @@ pipeline {
             }
         }
 
-        stage('Build Backend (Maven)') {
-            steps {
-                dir('Ecommerce-Backend') {
-                    echo "Building backend with Maven"
-                    sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
+        stage('Build & Test Backend') {
+            parallel {
+                stage('Build Backend') {
+                    steps {
+                        dir('Ecommerce-Backend') {
+                            echo "🔧 Building backend"
+                            sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
+                        }
+                    }
+                }
+                stage('Test Backend') {
+                    steps {
+                        dir('Ecommerce-Backend') {
+                            echo "🧪 Running backend tests"
+                            sh 'mvn test -Dhttps.protocols=TLSv1.2'
+                        }
+                    }
                 }
             }
         }
 
-        stage('Build Frontend (npm)') {
-            steps {
-                dir('Ecommerce-Frontend') {
-                    echo "Building frontend"
-                    sh 'npm install && npm run build'
+        stage('Build & Test Frontend') {
+            parallel {
+                stage('Build Frontend') {
+                    steps {
+                        dir('Ecommerce-Frontend') {
+                            echo "🎨 Building frontend"
+                            sh 'npm ci && npm run build'
+                        }
+                    }
+                }
+                stage('Test Frontend') {
+                    steps {
+                        dir('Ecommerce-Frontend') {
+                            echo "🧪 Running frontend tests (non-blocking)"
+                            sh 'npm test || echo "Warning: Frontend tests failed, but build continues"'
+                        }
+                    }
                 }
             }
         }
 
         stage('Get AWS Account ID') {
             steps {
-                script {
-                    env.AWS_ACCOUNT_ID = sh(
-                        script: "aws sts get-caller-identity --query Account --output text",
-                        returnStdout: true
-                    ).trim()
-                    echo "Deploying with Account ID: ${env.AWS_ACCOUNT_ID}"
-                }
-            }
-        }
-
-        stage('Build Docker Images') {
-            steps {
-                script {
-                    def BACKEND_ECR  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
-
-                    sh "docker build -t ${BACKEND_ECR}:${IMAGE_TAG} Ecommerce-Backend/"
-                    sh "docker build -t ${FRONTEND_ECR}:${IMAGE_TAG} Ecommerce-Frontend/"
-                }
-            }
-        }
-
-        stage('Scan Docker Images with Trivy') {
-            steps {
-                script {
-                    def BACKEND_ECR  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
-
-                    echo "Scanning backend image for vulnerabilities..."
-                    // Scans with exit code 1 if vulnerabilities of severity HIGH or CRITICAL are found
-                    sh """ 
-                    trivy image --exit-code 1 --severity HIGH,CRITICAL ${BACKEND_ECR}:${IMAGE_TAG} || true
-                    """
-
-                    echo "Scanning frontend image for vulnerabilities..."
-                    sh """
-                    trivy image --exit-code 1 --severity HIGH,CRITICAL ${FRONTEND_ECR}:${IMAGE_TAG} || true
-                    """
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-jenkins-creds']]) {
+                    script {
+                        env.AWS_ACCOUNT_ID = sh(
+                            script: 'aws sts get-caller-identity --query Account --output text',
+                            returnStdout: true
+                        ).trim()
+                        echo "🔐 AWS Account: ${env.AWS_ACCOUNT_ID}"
+                    }
                 }
             }
         }
 
         stage('Login to ECR') {
             steps {
-                script {
-                    def ECR_REGISTRY = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-                    sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-jenkins-creds']]) {
+                    sh """
+                        aws ecr get-login-password --region ${AWS_REGION} | \
+                        docker login --username AWS --password-stdin ${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                    """
                 }
             }
         }
 
-        stage('Push Docker Images') {
+        stage('Build & Push Docker Images') {
             steps {
                 script {
-                    def BACKEND_ECR  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
-                    def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+                    def backend  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                    def frontend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
 
-                    sh "docker push ${BACKEND_ECR}:${IMAGE_TAG}"
-                    sh "docker rmi ${BACKEND_ECR}:${IMAGE_TAG}"
+                    echo "🐳 Building Docker images with tag: ${IMAGE_TAG}"
 
-                    sh "docker push ${FRONTEND_ECR}:${IMAGE_TAG}"
-                    sh "docker rmi ${FRONTEND_ECR}:${IMAGE_TAG}"
+                    dir('Ecommerce-Backend') {
+                        sh "docker build -t ${backend}:${IMAGE_TAG} -t ${backend}:latest ."
+                    }
+                    dir('Ecommerce-Frontend') {
+                        sh "docker build -t ${frontend}:${IMAGE_TAG} -t ${frontend}:latest ."
+                    }
+
+                    echo "📤 Pushing images to ECR"
+                    sh """
+                        docker push ${backend}:${IMAGE_TAG}
+                        docker push ${backend}:latest
+                        docker push ${frontend}:${IMAGE_TAG}
+                        docker push ${frontend}:latest
+                    """
+                }
+            }
+        }
+
+        stage('Scan with Trivy') {
+            steps {
+                script {
+                    def backendImage  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend:${IMAGE_TAG}"
+                    def frontendImage = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend:${IMAGE_TAG}"
+
+                    echo "🔍 Scanning for CRITICAL vulnerabilities"
+                    sh "trivy image --exit-code 1 --severity CRITICAL ${backendImage}"
+                    sh "trivy image --exit-code 1 --severity CRITICAL ${frontendImage}"
                 }
             }
         }
 
         stage('Deploy to ECS') {
             steps {
+                echo "🚀 Deploying to ECS with force-new-deployment"
                 sh """
-                aws ecs update-service \
-                    --cluster ecommerce-project-cluster \
-                    --service ecommerce-project-backend-service \
-                    --force-new-deployment \
-                    --region ${AWS_REGION}
-                """
-                sh """
-                aws ecs update-service \
-                    --cluster ecommerce-project-cluster \
-                    --service ecommerce-project-frontend-service \
-                    --force-new-deployment \
-                    --region ${AWS_REGION}
+                    aws ecs update-service --cluster ecommerce-project-cluster \
+                      --service ecommerce-project-backend-service \
+                      --force-new-deployment --region ${AWS_REGION}
+
+                    aws ecs update-service --cluster ecommerce-project-cluster \
+                      --service ecommerce-project-frontend-service \
+                      --force-new-deployment --region ${AWS_REGION}
                 """
             }
         }
     }
 
     post {
-        success { echo "Deployment successful!" }
-        failure { echo "Deployment failed. Check logs." }
+        always {
+            script {
+                def backend  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
+                def frontend = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
+
+                echo "🧹 Cleaning up local Docker images"
+                sh """
+                    docker rmi ${backend}:${IMAGE_TAG} || true
+                    docker rmi ${backend}:latest || true
+                    docker rmi ${frontend}:${IMAGE_TAG} || true
+                    docker rmi ${frontend}:latest || true
+                    docker system prune -af || true
+                """
+            }
+        }
+        success {
+            echo "✅ Deployment successful! Tag: ${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Deployment failed. Check logs above."
+        }
     }
 }
