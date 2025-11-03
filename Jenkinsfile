@@ -6,10 +6,12 @@ pipeline {
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
         AWS_REGION = 'ap-south-1'
         IMAGE_TAG = "${env.BUILD_NUMBER}"    // version tag
+        S3_BUCKET = 'ecommerce-project-artifacts-032f73c4'
     }
 
     stages {
 
+        /* ------------------- Checkout ------------------- */
         stage('Checkout') {
             steps {
                 checkout scm
@@ -20,7 +22,7 @@ pipeline {
         stage('Build Backend (Maven)') {
             steps {
                 dir('Ecommerce-Backend') {
-                    echo "Building backend with Maven"
+                    echo "🏗️ Building backend with Maven"
                     sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
                 }
             }
@@ -30,8 +32,31 @@ pipeline {
         stage('Build Frontend (npm)') {
             steps {
                 dir('Ecommerce-Frontend') {
-                    echo "Building frontend"
+                    echo "🎨 Building frontend"
                     sh 'npm install && npm run build'
+                }
+            }
+        }
+
+        /* ------------------- Upload Artifacts to S3 ------------------- */
+        stage('Upload Build Artifacts to S3') {
+            steps {
+                script {
+                    echo "📦 Uploading build artifacts to S3 bucket: ${S3_BUCKET}"
+
+                    // Upload backend JAR
+                    sh """
+                    aws s3 cp Ecommerce-Backend/target/ecommerce-backend.jar \
+                    s3://${S3_BUCKET}/backend/ecommerce-backend-${IMAGE_TAG}.jar
+                    """
+
+                    // Upload frontend build folder
+                    sh """
+                    aws s3 sync Ecommerce-Frontend/build/ \
+                    s3://${S3_BUCKET}/frontend/${IMAGE_TAG}/ --delete
+                    """
+
+                    echo "✅ Artifacts uploaded successfully to S3!"
                 }
             }
         }
@@ -140,6 +165,6 @@ pipeline {
 
     post {
         success { echo "✅ Deployment successful! ECS will pull latest images." }
-        failure { echo "❌ Deployment failed. Check logs and Trivy reports." }
+        failure { echo "❌ Deployment failed. Check logs, Trivy reports, or S3 upload stage." }
     }
 }
