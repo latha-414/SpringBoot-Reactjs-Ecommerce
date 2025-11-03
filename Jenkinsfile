@@ -6,7 +6,7 @@ pipeline {
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
         AWS_REGION = 'ap-south-1'
         IMAGE_TAG = "${env.BUILD_NUMBER}"
-        S3_BUCKET = 'ecommerce-project-artifacts-032f73c4'  // ✅ Use your real bucket name here
+        S3_BUCKET = 'ecommerce-project-artifacts-032f73c4'  // ✅ Your real bucket name
     }
 
     stages {
@@ -18,22 +18,48 @@ pipeline {
             }
         }
 
-        /* ------------------- 2. Build Backend ------------------- */
-        stage('Build Backend (Maven)') {
-            steps {
-                dir('Ecommerce-Backend') {
-                    echo "🚧 Building Backend with Maven..."
-                    sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
+        /* ------------------- 2. Build Stages ------------------- */
+        stage('Build') {
+            parallel {
+                stage('Build Backend (Maven)') {
+                    steps {
+                        dir('Ecommerce-Backend') {
+                            echo "🚧 Building Backend with Maven..."
+                            sh 'mvn clean package -DskipTests -Dhttps.protocols=TLSv1.2'
+                        }
+                    }
+                }
+
+                stage('Build Frontend (npm)') {
+                    steps {
+                        dir('Ecommerce-Frontend') {
+                            echo "🧱 Building Frontend with npm..."
+                            sh 'npm install && npm run build'
+                        }
+                    }
                 }
             }
         }
 
-        /* ------------------- 3. Build Frontend ------------------- */
-        stage('Build Frontend (npm)') {
-            steps {
-                dir('Ecommerce-Frontend') {
-                    echo "🧱 Building Frontend with npm..."
-                    sh 'npm install && npm run build'
+        /* ------------------- 3. Test Stages ------------------- */
+        stage('Test') {
+            parallel {
+                stage('Backend Unit Tests') {
+                    steps {
+                        dir('Ecommerce-Backend') {
+                            echo "🧪 Running Backend Unit Tests..."
+                            sh 'mvn test'
+                        }
+                    }
+                }
+
+                stage('Frontend Unit Tests') {
+                    steps {
+                        dir('Ecommerce-Frontend') {
+                            echo "🧪 Running Frontend Unit Tests..."
+                            sh 'npm test --if-present'
+                        }
+                    }
                 }
             }
         }
