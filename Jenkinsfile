@@ -5,18 +5,18 @@ pipeline {
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         PATH = "${env.JAVA_HOME}/bin:/usr/local/bin:${env.PATH}"
         AWS_REGION = 'ap-south-1'
-        IMAGE_TAG = "${env.BUILD_NUMBER}"
+        IMAGE_TAG = "${env.BUILD_NUMBER}"    // version tag
     }
 
     stages {
-        /* ---------------------------------------------------- */
+
         stage('Checkout') {
             steps {
                 checkout scm
             }
         }
 
-        /* ---------------------------------------------------- */
+        /* ------------------- Backend Build ------------------- */
         stage('Build Backend (Maven)') {
             steps {
                 dir('Ecommerce-Backend') {
@@ -26,7 +26,7 @@ pipeline {
             }
         }
 
-        /* ---------------------------------------------------- */
+        /* ------------------- Frontend Build ------------------- */
         stage('Build Frontend (npm)') {
             steps {
                 dir('Ecommerce-Frontend') {
@@ -36,7 +36,7 @@ pipeline {
             }
         }
 
-        /* ---------------------------------------------------- */
+        /* ------------------- AWS Account ID ------------------- */
         stage('Get AWS Account ID') {
             steps {
                 script {
@@ -49,20 +49,23 @@ pipeline {
             }
         }
 
-        /* ---------------------------------------------------- */
+        /* ------------------- Docker Build ------------------- */
         stage('Build Docker Images') {
             steps {
                 script {
                     def BACKEND_ECR  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
                     def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
 
-                    sh "docker build -t ${BACKEND_ECR}:${IMAGE_TAG} Ecommerce-Backend/"
-                    sh "docker build -t ${FRONTEND_ECR}:${IMAGE_TAG} Ecommerce-Frontend/"
+                    // 🧱 Build both backend and frontend with 2 tags (latest + build number)
+                    sh """
+                    docker build -t ${BACKEND_ECR}:${IMAGE_TAG} -t ${BACKEND_ECR}:latest Ecommerce-Backend/
+                    docker build -t ${FRONTEND_ECR}:${IMAGE_TAG} -t ${FRONTEND_ECR}:latest Ecommerce-Frontend/
+                    """
                 }
             }
         }
 
-        /* ---------------------------------------------------- */
+        /* ------------------- Trivy Scan ------------------- */
         stage('Scan Docker Images with Trivy') {
             steps {
                 script {
@@ -71,27 +74,17 @@ pipeline {
                     def BACKEND_ECR  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
                     def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
 
-                    // Scan and generate reports
                     sh """
                     trivy image --format table --output trivy-backend-report.txt ${BACKEND_ECR}:${IMAGE_TAG}
                     trivy image --format table --output trivy-frontend-report.txt ${FRONTEND_ECR}:${IMAGE_TAG}
                     """
-
-                    // Optionally, fail the build if HIGH or CRITICAL vulnerabilities are found
-                    // Uncomment below lines if you want strict enforcement
-                    /*
-                    sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${BACKEND_ECR}:${IMAGE_TAG}"
-                    sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${FRONTEND_ECR}:${IMAGE_TAG}"
-                    */
-
-                    echo "✅ Trivy scan completed. Reports saved."
 
                     archiveArtifacts artifacts: 'trivy-*-report.txt', allowEmptyArchive: true
                 }
             }
         }
 
-        /* ---------------------------------------------------- */
+        /* ------------------- ECR Login ------------------- */
         stage('Login to ECR') {
             steps {
                 script {
@@ -101,23 +94,29 @@ pipeline {
             }
         }
 
-        /* ---------------------------------------------------- */
+        /* ------------------- Push to ECR ------------------- */
         stage('Push Docker Images') {
             steps {
                 script {
                     def BACKEND_ECR  = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-backend"
                     def FRONTEND_ECR = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ecommerce-project-frontend"
 
-                    sh "docker push ${BACKEND_ECR}:${IMAGE_TAG}"
-                    sh "docker rmi ${BACKEND_ECR}:${IMAGE_TAG}"
+                    // 🟢 Push both latest and versioned tags
+                    sh """
+                    docker push ${BACKEND_ECR}:${IMAGE_TAG}
+                    docker push ${BACKEND_ECR}:latest
+                    docker push ${FRONTEND_ECR}:${IMAGE_TAG}
+                    docker push ${FRONTEND_ECR}:latest
+                    """
 
-                    sh "docker push ${FRONTEND_ECR}:${IMAGE_TAG}"
-                    sh "docker rmi ${FRONTEND_ECR}:${IMAGE_TAG}"
+                    // Optional cleanup
+                    sh "docker rmi ${BACKEND_ECR}:${IMAGE_TAG} ${BACKEND_ECR}:latest || true"
+                    sh "docker rmi ${FRONTEND_ECR}:${IMAGE_TAG} ${FRONTEND_ECR}:latest || true"
                 }
             }
         }
 
-        /* ---------------------------------------------------- */
+        /* ------------------- ECS Deploy ------------------- */
         stage('Deploy to ECS') {
             steps {
                 sh """
@@ -127,6 +126,7 @@ pipeline {
                     --force-new-deployment \
                     --region ${AWS_REGION}
                 """
+
                 sh """
                 aws ecs update-service \
                     --cluster ecommerce-project-cluster \
@@ -139,7 +139,7 @@ pipeline {
     }
 
     post {
-        success { echo "✅ Deployment successful!" }
+        success { echo "✅ Deployment successful! ECS will pull latest images." }
         failure { echo "❌ Deployment failed. Check logs and Trivy reports." }
     }
 }
