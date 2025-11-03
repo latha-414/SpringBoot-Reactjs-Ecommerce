@@ -127,7 +127,7 @@ pipeline {
                 script {
                     echo "📦 Uploading artifacts to S3 using IAM Role dynamic bucket selection..."
                     sh """
-                    aws s3 cp trivy-backend-report.txt s3://$(aws s3 ls | awk 'NR==1{print $3}')/reports/trivy-backend-report-${IMAGE_TAG}.txt --region ${AWS_REGION} || true
+                    aws s3 cp trivy-backend-report.txt s3://\$(aws s3 ls | awk 'NR==1{print \$3}')/reports/trivy-backend-report-${IMAGE_TAG}.txt --region ${AWS_REGION} || true
                     """
                 }
             }
