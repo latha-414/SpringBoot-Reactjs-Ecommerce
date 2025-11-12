@@ -1,135 +1,157 @@
+Deploying an E-Commerce App to AWS ECS using Jenkins, Docker & Terraform
+
+ 🧩 Overview
+
+By the end of this project, you’ll have a complete CI/CD pipeline that:
+✅ Builds a Docker image of the app
+✅ Scans it with Trivy for vulnerabilities
+✅ Pushes the image to AWS Elastic Container Registry (ECR)
+✅ Deploys the containerized app to ECS Fargate using Terraform
 
 
-# 🛍️ Full Stack E-commerce Web Application
+## 🎯 Project Goals
 
-A full-stack **E-commerce application** using **Spring Boot** (Java) for the backend and **ReactJS with Vite** for the frontend. This application demonstrates the integration of RESTful APIs with a modern frontend stack, ideal for learning and demonstration purposes.
+✅ Develop and containerize the E-Commerce app
+✅ Use Jenkins for CI/CD automation
+✅ Use Terraform to provision AWS infrastructure
+✅ Scan Docker images for vulnerabilities before deployment
+✅ Monitor logs using CloudWatch
 
----
 
-## 📁 Project Structure
+## 📂 Project Structure
 
-```
-SpringBoot-Reactjs-Ecommerce-main/
-├── Ecommerce-Backend/       # Spring Boot REST API backend
-├── Ecommerce-Frontend/      # React + Vite frontend application
-```
+Ecommerce-DevOps-Project/
+│
+├── Ecommerce-Backend/
+│   ├── src/
+│   ├── target/
+│   ├── Dockerfile
+│   ├── pom.xml
+│   └── mvnw, mvnw.cmd
+│
+├── Ecommerce-Frontend/
+│   ├── public/
+│   ├── src/
+│   ├── Dockerfile
+│   ├── package.json
+│   └── vite.config.js
+│
+├── terraform/         
+├── Jenkinsfile        
+└── README.md          
 
----
 
-## 🧩 Backend - Spring Boot
+## 🧠 Tools & Technologies
 
-### 🔧 Technologies Used
-
-* Java 17+
-* Spring Boot
-* Spring Data JPA
-* MySQL (can be adapted)
-* Maven
-
-### 📂 Backend Directory Structure
-
-```
-Ecommerce-Backend/
-├── controller/      # REST endpoints
-├── model/           # JPA entity classes
-├── repo/            # Spring Data JPA interfaces
-├── service/         # Business logic
-├── resources/
-│   ├── application.properties
-│   └── data1.sql
-└── pom.xml          # Maven build config
-```
-
-### ⚙️ Setup Instructions
-
-1. **Database Setup:**
-
-   * Create a MySQL database, e.g., `ecomdb`.
-   * Update `application.properties`:
-
-     ```properties
-     spring.datasource.url=jdbc:mysql://localhost:3306/ecomdb
-     spring.datasource.username=root
-     spring.datasource.password=yourpassword
-     spring.jpa.hibernate.ddl-auto=update
-     ```
-
-2. **Run the App:**
-
-   ```bash
-   cd Ecommerce-Backend
-   mvn spring-boot:run
-   ```
-
-3. **Data Initialization:**
-
-   On first run, `data1.sql` inserts seed product data into your DB.
-
-### 📡 REST API Endpoints
-
-| Method | Endpoint         | Description        |
-| ------ | ---------------- | ------------------ |
-| GET    | `/products`      | Fetch all products |
-| GET    | `/products/{id}` | Get product by ID  |
-| POST   | `/products`      | Add new product    |
-| PUT    | `/products/{id}` | Update product     |
-| DELETE | `/products/{id}` | Delete product     |
+| Tool                  | Purpose                                |
+| --------------------- | -------------------------------------- |
+| **AWS ECS (Fargate)** | Host and run containerized app         |
+| **ECR**               | Store Docker images                    |
+| **Terraform**         | Provision AWS infrastructure           |
+| **Jenkins**           | Automate build, test, deploy pipeline  |
+| **Docker**            | Containerize the application           |
+| **Trivy**             | Scan Docker images for vulnerabilities |
+| **CloudWatch**        | Log and monitor ECS tasks              |
 
 ---
 
-## 💻 Frontend - React + Vite
+## ⚙️ Jenkins Server Setup
 
-### 🔧 Technologies Used
+Run these commands on your Jenkins EC2 server to install all necessary tools:
 
-* ReactJS
-* Vite (bundler)
-* Axios (API calls)
-* Bootstrap (UI)
-* JavaScript (ES6+)
+### 🐳 Install Docker
 
-### 📂 Frontend Directory Structure
+sudo apt update
+sudo apt install -y docker.io
+sudo systemctl start docker
+sudo systemctl enable docker
+docker --version
+sudo usermod -aG docker jenkins
+groups jenkins
 
-```
-Ecommerce-Frontend/
-├── public/
-├── src/
-│   ├── components/      # Reusable components
-│   ├── pages/           # Page-level components
-│   ├── App.jsx          # App layout
-│   └── main.jsx         # Entry point
-├── package.json
-└── vite.config.js
-```
+### ☁️ Install AWS CLI
 
-### ▶️ Getting Started
+sudo apt update
+sudo apt install -y unzip curl python3 python3-pip
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+aws --version
 
-1. **Install dependencies:**
+### ⚡ Install Node.js & npm
 
-   ```bash
-   cd Ecommerce-Frontend
-   npm install
-   ```
+sudo apt update
+sudo apt install nodejs npm -y
+node -v
+npm -v
 
-2. **Run the app:**
+### ☕ Install Maven
 
-   ```bash
-   npm run dev
-   ```
+sudo apt update
+sudo apt install maven -y
+mvn --version
 
-   This will launch the frontend at `http://localhost:5173`.
+### 🔒 Install Trivy (Security Scanner)
 
-3. **Connect to Backend:**
+sudo apt update && \
+sudo apt install wget apt-transport-https gnupg lsb-release -y && \
+wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add - && \
+echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list && \
+sudo apt update && \
+sudo apt install trivy -y
 
-   Update the backend URL in API service files (usually inside `src/` or `src/services/`) if needed:
+## 🔐 IAM Roles & Policies for Jenkins
 
-   ```js
-   axios.get('http://localhost:8080/products')
-   ```
+Attach the following policies to the **Jenkins IAM Role** (or user):
 
-### 🧩 Features
+| Policy Name                             | Type        | Purpose                                    |
+| --------------------------------------- | ----------- | ------------------------------------------ |
+| **AmazonEC2ContainerRegistryPowerUser** | AWS Managed | Push/Pull Docker images to ECR             |
+| **AmazonECS_FullAccess**                | AWS Managed | Deploy and manage ECS services             |
+| **AmazonS3FullAccess**                  | AWS Managed | Store Terraform state files                |
+| **CloudWatchLogsFullAccess**            | AWS Managed | View and manage ECS logs                   |
+| **s3full**                              | Inline      | Custom S3 permissions for specific buckets |
 
-* Product List (from Spring Boot backend)
-* Dynamic rendering using React components
-* Fully responsive UI
-* Easy integration with further features (cart, checkout, login)
 
+## 🧱 Terraform Configuration (Example)
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_ecr_repository" "app" {
+  name = "ecommerce-app"
+}
+
+resource "aws_ecs_cluster" "main" {
+  name = "ecommerce-cluster"
+}
+
+Run Terraform commands:
+
+terraform init
+terraform apply -auto-approve
+
+## 🔄 Jenkins Pipeline (CI/CD Flow)
+
+1️⃣ **Checkout Code from GitHub**
+2️⃣ **Build Docker Image**
+3️⃣ **Run Trivy Scan**
+4️⃣ **Push Image to AWS ECR**
+5️⃣ **Deploy to ECS using Terraform**
+6️⃣ **Monitor logs in CloudWatch**
+
+
+## 📊 Monitoring Deployment
+
+Check:
+
+* Jenkins Console Output → for build and deploy logs
+* AWS ECS Console → for service and task status
+* AWS CloudWatch → for container logs
+
+## ✅ Final Testing
+
+Once deployment completes, test your ECS service endpoint:
+
+curl http://your-ecs-service-url
