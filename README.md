@@ -113,20 +113,6 @@ Attach the following policies to the **Jenkins IAM Role** (or user):
 | **s3full**                              | Inline      | Custom S3 permissions for specific buckets |
 
 
-## 🧱 Terraform Configuration (Example)
-
-provider "aws" {
-  region = "us-east-1"
-}
-
-resource "aws_ecr_repository" "app" {
-  name = "ecommerce-app"
-}
-
-resource "aws_ecs_cluster" "main" {
-  name = "ecommerce-cluster"
-}
-
 Run Terraform commands:
 
 terraform init
@@ -135,11 +121,15 @@ terraform apply -auto-approve
 ## 🔄 Jenkins Pipeline (CI/CD Flow)
 
 1️⃣ **Checkout Code from GitHub**
+
 2️⃣ **Build Docker Image**
+
 3️⃣ **Run Trivy Scan**
+
 4️⃣ **Push Image to AWS ECR**
-5️⃣ **Deploy to ECS using Terraform**
-6️⃣ **Monitor logs in CloudWatch**
+
+5️⃣ Deploy to ECS using Terraform
+6️⃣ Monitor logs in CloudWatch
 
 
 ## 📊 Monitoring Deployment
